@@ -1,0 +1,53 @@
+name: Build and public docker image
+
+on:
+  push:
+    branches: "master"
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    # run only when code is compiling and tests are passing
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
+    # steps to perform in job
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+
+      - name: install deps
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+          libelf1 libelf-dev zlib1g-dev libclang-dev \
+          make git clang llvm pkg-config build-essential
+
+      - name: build package
+        run:  make build
+
+      # setup Docker buld action
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Github Packages
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image and push to GitHub Container Registry
+        uses: docker/build-push-action@v2
+        with:
+          # relative path to the place where source code with Dockerfile is located
+          context: ./
+          file: dockerfile
+          platforms: linux/amd64
+          # Note: tags has to be all lower-case
+          tags: |
+            ghcr.io/${{ github.repository }}
+          push: true
+
+      - name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
