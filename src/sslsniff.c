@@ -60,7 +60,6 @@ const char argp_program_doc[] =
 	"\n"
 	"OUTPUT: Each SSL event is output as a JSON object on a separate line.\n"
 	"eBPF capture is limited to 32KB per event due to kernel constraints.\n"
-	"The --buffer-size option configures user-space buffer allocation.\n"
 	"\n"
 	"EXAMPLES:\n"
 	"    ./sslsniff              # sniff OpenSSL and GnuTLS functions\n"
@@ -74,7 +73,6 @@ const char argp_program_doc[] =
 	"    ./sslsniff -x           # include uid and tid fields\n"
 	"    ./sslsniff -l           # include latency_ms field\n"
 	"    ./sslsniff -l --handshake  # include handshake latency\n"
-	"    ./sslsniff --buffer-size 1048576  # set 1MB buffer size\n"
 	"    ./sslsniff --extra-lib openssl:/path/libssl.so.1.1 # sniff extra "
 	"library\n";
 
@@ -90,7 +88,6 @@ struct env {
 	bool latency;
 	bool handshake;
 	char *extra_lib;
-	int buf_size;
 } env = {
 	.uid = INVALID_UID,
 	.pid = INVALID_PID,
@@ -98,13 +95,11 @@ struct env {
 	.gnutls = false,
 	.nss = false,
 	.comm = NULL,
-	.buf_size = DEFAULT_USER_BUF_SIZE,
 };
 
 #define HEXDUMP_KEY 1000
 #define HANDSHAKE_KEY 1002
 #define EXTRA_LIB_KEY 1003
-#define BUFFER_SIZE_KEY 1004
 
 static const struct argp_option opts[] = {
 	{"pid", 'p', "PID", 0, "Sniff this PID only."},
@@ -119,8 +114,6 @@ static const struct argp_option opts[] = {
 	{"latency", 'l', NULL, 0, "Show function latency"},
 	{"handshake", HANDSHAKE_KEY, NULL, 0,
 	 "Show SSL handshake latency, enabled only if latency option is on."},
-	{"buffer-size", BUFFER_SIZE_KEY, "BYTES", 0,
-	 "Set user-space buffer size in bytes (default: 524288 bytes = 512KB, eBPF limited to 32KB)"},
 	{"verbose", 'v', NULL, 0, "Verbose debug output"},
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help" },
 	{},
@@ -162,13 +155,6 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 		break;
 	case HANDSHAKE_KEY:
 		env.handshake = true;
-		break;
-	case BUFFER_SIZE_KEY:
-		env.buf_size = atoi(arg);
-		if (env.buf_size <= 0 || env.buf_size > 10 * 1024 * 1024) {
-			fprintf(stderr, "Buffer size must be between 1 and 10MB\n");
-			return ARGP_ERR_UNKNOWN;
-		}
 		break;
 	case 'h':
 		argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
@@ -303,7 +289,7 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 		return;
 	}
 
-	// eBPF端最多只能捕获MAX_BUF_SIZE的数据
+	// eBPF captures up to MAX_BUF_SIZE bytes per event
 	if (event->len <= MAX_BUF_SIZE) {
 		buf_size = event->len;
 	} else {
@@ -448,7 +434,7 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// Allocate global buffers once - use MAX_BUF_SIZE since that's the eBPF limit
+	// Allocate global buffers once
 	event_buf = malloc(MAX_BUF_SIZE + 1);
 	if (!event_buf) {
 		warn("failed to allocate event buffer\n");
