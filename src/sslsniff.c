@@ -59,7 +59,8 @@ const char argp_program_doc[] =
 	"USAGE: sslsniff [OPTIONS]\n"
 	"\n"
 	"OUTPUT: Each SSL event is output as a JSON object on a separate line.\n"
-	"Buffer size is 512KB by default and can be configured with --buffer-size.\n"
+	"eBPF capture is limited to 32KB per event due to kernel constraints.\n"
+	"The --buffer-size option configures user-space buffer allocation.\n"
 	"\n"
 	"EXAMPLES:\n"
 	"    ./sslsniff              # sniff OpenSSL and GnuTLS functions\n"
@@ -97,7 +98,7 @@ struct env {
 	.gnutls = false,
 	.nss = false,
 	.comm = NULL,
-	.buf_size = MAX_BUF_SIZE,
+	.buf_size = DEFAULT_USER_BUF_SIZE,
 };
 
 #define HEXDUMP_KEY 1000
@@ -119,7 +120,7 @@ static const struct argp_option opts[] = {
 	{"handshake", HANDSHAKE_KEY, NULL, 0,
 	 "Show SSL handshake latency, enabled only if latency option is on."},
 	{"buffer-size", BUFFER_SIZE_KEY, "BYTES", 0,
-	 "Set buffer size in bytes (default: 524288 bytes = 512KB)"},
+	 "Set user-space buffer size in bytes (default: 524288 bytes = 512KB, eBPF limited to 32KB)"},
 	{"verbose", 'v', NULL, 0, "Verbose debug output"},
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help" },
 	{},
@@ -178,7 +179,6 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 	return 0;
 }
 
-#define PERF_BUFFER_PAGES 16
 #define PERF_POLL_TIMEOUT_MS 100
 #define warn(...) fprintf(stderr, __VA_ARGS__)
 
@@ -196,9 +196,7 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format,
 	return vfprintf(stderr, format, args);
 }
 
-static void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt) {
-	warn("lost %llu events on CPU #%d\n", lost_cnt, cpu);
-}
+/* handle_lost_events removed - ring buffer doesn't have lost events like perf buffer */
 
 static void sig_int(int signo) { 
 	exiting = 1;
@@ -305,16 +303,17 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 		return;
 	}
 
-	if (event->len <= env.buf_size) {
+	// eBPF端最多只能捕获MAX_BUF_SIZE的数据
+	if (event->len <= MAX_BUF_SIZE) {
 		buf_size = event->len;
 	} else {
-		buf_size = env.buf_size;
+		buf_size = MAX_BUF_SIZE;
 	}
 
 	if (event->buf_filled == 1 && buf_size > 0) {
 		// Additional safety check to prevent buffer overflow
-		if (buf_size > env.buf_size) {
-			buf_size = env.buf_size;
+		if (buf_size > MAX_BUF_SIZE) {
+			buf_size = MAX_BUF_SIZE;
 		}
 		memcpy(event_buf, event->buf, buf_size);
 		event_buf[buf_size] = '\0';  // Null terminate
@@ -412,19 +411,20 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	printf("}\n");
 }
 
-static void handle_event(void *ctx, int cpu, void *data, __u32 data_size) {
+static int handle_event(void *ctx, void *data, size_t data_sz) {
 	struct probe_SSL_data_t *e = data;
 	if (e->is_handshake) {
-		print_event(e, "perf_SSL_do_handshake");
+		print_event(e, "ringbuf_SSL_do_handshake");
 	} else {
-		print_event(e, "perf_SSL_rw");
+		print_event(e, "ringbuf_SSL_rw");
 	}
+	return 0;
 }
 
 int main(int argc, char **argv) {
 	LIBBPF_OPTS(bpf_object_open_opts, open_opts);
 	struct sslsniff_bpf *obj = NULL;
-	struct perf_buffer *pb = NULL;
+	struct ring_buffer *rb = NULL;
 	int err;
 
 	err = argp_parse(&argp, argc, argv, 0, NULL, NULL);
@@ -448,15 +448,15 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// Allocate global buffers once
-	event_buf = malloc(env.buf_size + 1);
+	// Allocate global buffers once - use MAX_BUF_SIZE since that's the eBPF limit
+	event_buf = malloc(MAX_BUF_SIZE + 1);
 	if (!event_buf) {
 		warn("failed to allocate event buffer\n");
 		err = -ENOMEM;
 		goto cleanup;
 	}
 
-	hex_buf = malloc(env.buf_size * 2 + 1);
+	hex_buf = malloc(MAX_BUF_SIZE * 2 + 1);
 	if (!hex_buf) {
 		warn("failed to allocate hex buffer\n");
 		err = -ENOMEM;
@@ -497,12 +497,10 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	pb = perf_buffer__new(bpf_map__fd(obj->maps.perf_SSL_events),
-							PERF_BUFFER_PAGES, handle_event, handle_lost_events,
-							NULL, NULL);
-	if (!pb) {
+	rb = ring_buffer__new(bpf_map__fd(obj->maps.rb), handle_event, NULL, NULL);
+	if (!rb) {
 		err = -errno;
-		warn("failed to open perf buffer: %d\n", err);
+		warn("failed to open ring buffer: %d\n", err);
 		goto cleanup;
 	}
 
@@ -515,9 +513,9 @@ int main(int argc, char **argv) {
 	// JSON output doesn't need a header - removed the header printing
 
 	while (!exiting) {
-		err = perf_buffer__poll(pb, PERF_POLL_TIMEOUT_MS);
+		err = ring_buffer__poll(rb, PERF_POLL_TIMEOUT_MS);
 		if (err < 0 && err != -EINTR) {
-			warn("error polling perf buffer: %s\n", strerror(-err));
+			warn("error polling ring buffer: %s\n", strerror(-err));
 			goto cleanup;
 		}
 		err = 0;
@@ -532,7 +530,7 @@ cleanup:
 		free(hex_buf);
 		hex_buf = NULL;
 	}
-	perf_buffer__free(pb);
+	ring_buffer__free(rb);
 	sslsniff_bpf__destroy(obj);
 	return err != 0;
 }

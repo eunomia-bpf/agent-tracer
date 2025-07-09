@@ -6,7 +6,8 @@
 #ifndef __SSLSNIFF_H
 #define __SSLSNIFF_H
 
-#define MAX_BUF_SIZE (8 * 1024)  // 512KB default buffer size
+#define MAX_BUF_SIZE (32 * 1024)  // 32KB eBPF buffer size (eBPF限制)
+#define DEFAULT_USER_BUF_SIZE (512 * 1024)  // 512KB默认用户空间buffer size
 #define TASK_COMM_LEN 16
 
 struct probe_SSL_data_t {

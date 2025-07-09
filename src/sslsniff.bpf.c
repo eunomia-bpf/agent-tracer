@@ -11,10 +11,9 @@
 #include "sslsniff.h"
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __uint(key_size, sizeof(__u32));
-    __uint(value_size, sizeof(__u32));
-} perf_SSL_events SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 256 * 1024); /* 256KB ring buffer */
+} rb SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -23,8 +22,6 @@ struct {
     __type(value, size_t*);
 } readbytes_ptrs SEC(".maps");
 
-#define BASE_EVENT_SIZE ((size_t)(&((struct probe_SSL_data_t *)0)->buf))
-#define EVENT_SIZE(X) (BASE_EVENT_SIZE + ((size_t)(X)))
 #define MAX_ENTRIES 10240
 
 #define min(x, y)                      \
@@ -35,12 +32,7 @@ struct {
         _min1 < _min2 ? _min1 : _min2; \
     })
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, u32);
-    __type(value, struct probe_SSL_data_t);
-} ssl_data SEC(".maps");
+/* ssl_data per-CPU array removed - ring buffer allocates memory directly */
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -92,7 +84,6 @@ int BPF_UPROBE(probe_SSL_rw_enter, void *ssl, void *buf, int num) {
 
 static int SSL_exit(struct pt_regs *ctx, int rw) {
     int ret = 0;
-    u32 zero = 0;
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u32 tid = (u32)pid_tgid;
@@ -117,7 +108,8 @@ static int SSL_exit(struct pt_regs *ctx, int rw) {
     if (len <= 0)  // no data
         return 0;
 
-    struct probe_SSL_data_t *data = bpf_map_lookup_elem(&ssl_data, &zero);
+    /* reserve space in ring buffer */
+    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
     if (!data)
         return 0;
 
@@ -145,8 +137,8 @@ static int SSL_exit(struct pt_regs *ctx, int rw) {
     else
         buf_copy_size = 0;
 
-    bpf_perf_event_output(ctx, &perf_SSL_events, BPF_F_CURRENT_CPU, data,
-                            EVENT_SIZE(buf_copy_size));
+    /* submit to ring buffer */
+    bpf_ringbuf_submit(data, 0);
     return 0;
 }
 
@@ -202,7 +194,6 @@ int BPF_UPROBE(probe_SSL_read_ex_enter, void *ssl, void *buf, size_t num, size_t
 
 static int ex_SSL_exit(struct pt_regs *ctx, int rw, int len) {
     int ret = 0;
-    u32 zero = 0;
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u32 tid = (u32)pid_tgid;
@@ -226,7 +217,8 @@ static int ex_SSL_exit(struct pt_regs *ctx, int rw, int len) {
     if (len <= 0)  // no data
         return 0;
 
-    struct probe_SSL_data_t *data = bpf_map_lookup_elem(&ssl_data, &zero);
+    /* reserve space in ring buffer */
+    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
     if (!data)
         return 0;
 
@@ -254,8 +246,8 @@ static int ex_SSL_exit(struct pt_regs *ctx, int rw, int len) {
     else
         buf_copy_size = 0;
 
-    bpf_perf_event_output(ctx, &perf_SSL_events, BPF_F_CURRENT_CPU, data,
-                            EVENT_SIZE(buf_copy_size));
+    /* submit to ring buffer */
+    bpf_ringbuf_submit(data, 0);
     
     return 0;
 }
@@ -315,7 +307,6 @@ int BPF_UPROBE(probe_SSL_do_handshake_enter, void *ssl) {
 
 SEC("uretprobe/do_handshake")
 int BPF_URETPROBE(probe_SSL_do_handshake_exit) {
-    u32 zero = 0;
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u32 tid = (u32)pid_tgid;
@@ -339,7 +330,8 @@ int BPF_URETPROBE(probe_SSL_do_handshake_exit) {
     if (ret <= 0)  // handshake failed
         return 0;
 
-    struct probe_SSL_data_t *data = bpf_map_lookup_elem(&ssl_data, &zero);
+    /* reserve space in ring buffer */
+    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
     if (!data)
         return 0;
 
@@ -355,8 +347,8 @@ int BPF_URETPROBE(probe_SSL_do_handshake_exit) {
     bpf_get_current_comm(&data->comm, sizeof(data->comm));
     bpf_map_delete_elem(&start_ns, &tid);
 
-    bpf_perf_event_output(ctx, &perf_SSL_events, BPF_F_CURRENT_CPU, data,
-                            EVENT_SIZE(0));
+    /* submit to ring buffer */
+    bpf_ringbuf_submit(data, 0);
     return 0;
 }
 
