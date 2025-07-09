@@ -1,3 +1,4 @@
 .direnv
 /build
 ecapture
+src/res.txt

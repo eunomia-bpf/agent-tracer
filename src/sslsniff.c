@@ -341,10 +341,10 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 			buf_to_hex((uint8_t *)buf, buf_size, hex_data);
 			printf(",\"data_hex\":\"%s\"", hex_data);
 		} else {
-			// Escape the buffer data for JSON
+			// Escape the buffer data for JSON with UTF-8 support
 			printf(",\"data\":\"");
 			for (unsigned int i = 0; i < buf_size; i++) {
-				char c = buf[i];
+				unsigned char c = buf[i];
 				if (c == '"' || c == '\\') {
 					printf("\\%c", c);
 				} else if (c == '\n') {
@@ -353,10 +353,19 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 					printf("\\r");
 				} else if (c == '\t') {
 					printf("\\t");
-				} else if (isprint(c)) {
+				} else if (c == '\b') {
+					printf("\\b");
+				} else if (c == '\f') {
+					printf("\\f");
+				} else if (c >= 32 && c <= 126) {
+					// ASCII printable characters
+					printf("%c", c);
+				} else if (c >= 128) {
+					// UTF-8 multi-byte sequence - pass through as-is
 					printf("%c", c);
 				} else {
-					printf("\\u%04x", (unsigned char)c);
+					// Control characters (0-31, 127)
+					printf("\\u%04x", c);
 				}
 			}
 			printf("\"");
