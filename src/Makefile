@@ -24,6 +24,13 @@ INCLUDES := -I$(OUTPUT) -I../libbpf/include/uapi -I$(dir $(VMLINUX))
 CFLAGS := -g -Wall
 ALL_LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
 
+# AddressSanitizer flags
+ifdef ASAN
+ASAN_FLAGS := -fsanitize=address -fno-omit-frame-pointer -O1 -g
+CFLAGS += $(ASAN_FLAGS)
+ALL_LDFLAGS += $(ASAN_FLAGS)
+endif
+
 APPS = sslsniff process # minimal minimal_legacy uprobe kprobe fentry usdt sockfilter tc ksyscall
 
 CARGO ?= $(shell which cargo)
@@ -71,10 +78,30 @@ $(call allow-override,LD,$(CROSS_COMPILE)ld)
 .PHONY: all
 all: $(APPS)
 
+.PHONY: debug
+debug:
+	$(MAKE) ASAN=1 all
+
+.PHONY: sslsniff-debug
+sslsniff-debug:
+	$(MAKE) ASAN=1 sslsniff
+
 .PHONY: clean
 clean:
 	$(call msg,CLEAN)
 	$(Q)rm -rf $(OUTPUT) $(APPS)
+
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "  all          - Build all applications"
+	@echo "  sslsniff     - Build sslsniff only"
+	@echo "  debug        - Build all applications with AddressSanitizer"
+	@echo "  sslsniff-debug - Build sslsniff with AddressSanitizer"
+	@echo "  clean        - Clean build artifacts"
+	@echo ""
+	@echo "Build with AddressSanitizer manually:"
+	@echo "  make ASAN=1 sslsniff"
 
 $(OUTPUT) $(OUTPUT)/libbpf $(BPFTOOL_OUTPUT):
 	$(call msg,MKDIR,$@)

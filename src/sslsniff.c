@@ -59,6 +59,7 @@ const char argp_program_doc[] =
 	"USAGE: sslsniff [OPTIONS]\n"
 	"\n"
 	"OUTPUT: Each SSL event is output as a JSON object on a separate line.\n"
+	"Buffer size is 512KB by default and can be configured with --buffer-size.\n"
 	"\n"
 	"EXAMPLES:\n"
 	"    ./sslsniff              # sniff OpenSSL and GnuTLS functions\n"
@@ -72,6 +73,7 @@ const char argp_program_doc[] =
 	"    ./sslsniff -x           # include uid and tid fields\n"
 	"    ./sslsniff -l           # include latency_ms field\n"
 	"    ./sslsniff -l --handshake  # include handshake latency\n"
+	"    ./sslsniff --buffer-size 1048576  # set 1MB buffer size\n"
 	"    ./sslsniff --extra-lib openssl:/path/libssl.so.1.1 # sniff extra "
 	"library\n";
 
@@ -87,6 +89,7 @@ struct env {
 	bool latency;
 	bool handshake;
 	char *extra_lib;
+	int buf_size;
 } env = {
 	.uid = INVALID_UID,
 	.pid = INVALID_PID,
@@ -94,11 +97,13 @@ struct env {
 	.gnutls = false,
 	.nss = false,
 	.comm = NULL,
+	.buf_size = MAX_BUF_SIZE,
 };
 
 #define HEXDUMP_KEY 1000
 #define HANDSHAKE_KEY 1002
 #define EXTRA_LIB_KEY 1003
+#define BUFFER_SIZE_KEY 1004
 
 static const struct argp_option opts[] = {
 	{"pid", 'p', "PID", 0, "Sniff this PID only."},
@@ -113,6 +118,8 @@ static const struct argp_option opts[] = {
 	{"latency", 'l', NULL, 0, "Show function latency"},
 	{"handshake", HANDSHAKE_KEY, NULL, 0,
 	 "Show SSL handshake latency, enabled only if latency option is on."},
+	{"buffer-size", BUFFER_SIZE_KEY, "BYTES", 0,
+	 "Set buffer size in bytes (default: 524288 bytes = 512KB)"},
 	{"verbose", 'v', NULL, 0, "Verbose debug output"},
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help" },
 	{},
@@ -154,6 +161,13 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 		break;
 	case HANDSHAKE_KEY:
 		env.handshake = true;
+		break;
+	case BUFFER_SIZE_KEY:
+		env.buf_size = atoi(arg);
+		if (env.buf_size <= 0 || env.buf_size > 10 * 1024 * 1024) {
+			fprintf(stderr, "Buffer size must be between 1 and 10MB\n");
+			return ARGP_ERR_UNKNOWN;
+		}
 		break;
 	case 'h':
 		argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
@@ -270,6 +284,10 @@ char *find_library_path(const char *libname) {
 	return NULL;
 }
 
+// Global buffers allocated once and reused
+static char *event_buf = NULL;
+static char *hex_buf = NULL;
+
 void buf_to_hex(const uint8_t *buf, size_t len, char *hex_str) {
 	for (size_t i = 0; i < len; i++) {
 		sprintf(hex_str + 2 * i, "%02x", buf[i]);
@@ -279,17 +297,27 @@ void buf_to_hex(const uint8_t *buf, size_t len, char *hex_str) {
 // Function to print the event from the perf buffer in JSON format
 void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	static unsigned long long start = 0;  // Use static to retain value across function calls
-	char buf[MAX_BUF_SIZE + 1] = {0};  // +1 for null terminator
 	unsigned int buf_size;
 
-	if (event->len <= MAX_BUF_SIZE) {
-		buf_size = event->len;
-	} else {
-		buf_size = MAX_BUF_SIZE;
+	// Safety check for global buffers
+	if (!event_buf || !hex_buf) {
+		fprintf(stderr, "Error: global buffers not allocated\n");
+		return;
 	}
 
-	if (event->buf_filled == 1) {
-		memcpy(buf, event->buf, buf_size);
+	if (event->len <= env.buf_size) {
+		buf_size = event->len;
+	} else {
+		buf_size = env.buf_size;
+	}
+
+	if (event->buf_filled == 1 && buf_size > 0) {
+		// Additional safety check to prevent buffer overflow
+		if (buf_size > env.buf_size) {
+			buf_size = env.buf_size;
+		}
+		memcpy(event_buf, event->buf, buf_size);
+		event_buf[buf_size] = '\0';  // Null terminate
 	} else {
 		buf_size = 0;
 	}
@@ -336,15 +364,14 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	// Data field
 	if (buf_size > 0) {
 		if (env.hexdump) {
-			// Output as hex string
-			char hex_data[MAX_BUF_SIZE * 2 + 1] = {0};
-			buf_to_hex((uint8_t *)buf, buf_size, hex_data);
-			printf(",\"data_hex\":\"%s\"", hex_data);
+			// Output as hex string using pre-allocated buffer
+			buf_to_hex((uint8_t *)event_buf, buf_size, hex_buf);
+			printf(",\"data_hex\":\"%s\"", hex_buf);
 		} else {
 			// Escape the buffer data for JSON with UTF-8 support
 			printf(",\"data\":\"");
 			for (unsigned int i = 0; i < buf_size; i++) {
-				unsigned char c = buf[i];
+				unsigned char c = event_buf[i];
 				if (c == '"' || c == '\\') {
 					printf("\\%c", c);
 				} else if (c == '\n') {
@@ -421,20 +448,53 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
+	// Allocate global buffers once
+	event_buf = malloc(env.buf_size + 1);
+	if (!event_buf) {
+		warn("failed to allocate event buffer\n");
+		err = -ENOMEM;
+		goto cleanup;
+	}
+
+	hex_buf = malloc(env.buf_size * 2 + 1);
+	if (!hex_buf) {
+		warn("failed to allocate hex buffer\n");
+		err = -ENOMEM;
+		goto cleanup;
+	}
+
 	if (env.openssl) {
 		char *openssl_path = find_library_path("libssl.so");
-		printf("OpenSSL path: %s\n", openssl_path);
-		attach_openssl(obj, openssl_path);
+		if (verbose) {
+			fprintf(stderr, "OpenSSL path: %s\n", openssl_path ? openssl_path : "not found");
+		}
+		if (openssl_path) {
+			attach_openssl(obj, openssl_path);
+		} else {
+			warn("OpenSSL library not found\n");
+		}
 	}
 	if (env.gnutls) {
 		char *gnutls_path = find_library_path("libgnutls.so");
-		printf("GnuTLS path: %s\n", gnutls_path);
-		attach_gnutls(obj, gnutls_path);
+		if (verbose) {
+			fprintf(stderr, "GnuTLS path: %s\n", gnutls_path ? gnutls_path : "not found");
+		}
+		if (gnutls_path) {
+			attach_gnutls(obj, gnutls_path);
+		} else {
+			warn("GnuTLS library not found\n");
+		}
 	}
 	if (env.nss) {
 		char *nss_path = find_library_path("libnspr4.so");
-		printf("NSS path: %s\n", nss_path);
-		attach_nss(obj, nss_path);
+		if (verbose) {
+			fprintf(stderr, "NSS path: %s\n", nss_path ? nss_path : "not found");
+		}
+		if (nss_path) {
+			attach_nss(obj, nss_path);
+		} else {
+			warn("NSS library not found\n");
+		}
 	}
 
 	pb = perf_buffer__new(bpf_map__fd(obj->maps.perf_SSL_events),
@@ -464,6 +524,14 @@ int main(int argc, char **argv) {
 	}
 
 cleanup:
+	if (event_buf) {
+		free(event_buf);
+		event_buf = NULL;
+	}
+	if (hex_buf) {
+		free(hex_buf);
+		hex_buf = NULL;
+	}
 	perf_buffer__free(pb);
 	sslsniff_bpf__destroy(obj);
 	return err != 0;

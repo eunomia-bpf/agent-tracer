@@ -6,7 +6,7 @@
 #ifndef __SSLSNIFF_H
 #define __SSLSNIFF_H
 
-#define MAX_BUF_SIZE 8192
+#define MAX_BUF_SIZE (8 * 1024)  // 512KB default buffer size
 #define TASK_COMM_LEN 16
 
 struct probe_SSL_data_t {
