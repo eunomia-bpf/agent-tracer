@@ -54,9 +54,11 @@ volatile sig_atomic_t exiting = 0;
 const char *argp_program_version = "sslsniff 0.1";
 const char *argp_program_bug_address = "https://github.com/iovisor/bcc/tree/master/libbpf-tools";
 const char argp_program_doc[] =
-	"Sniff SSL data.\n"
+	"Sniff SSL data and output in JSON format.\n"
 	"\n"
 	"USAGE: sslsniff [OPTIONS]\n"
+	"\n"
+	"OUTPUT: Each SSL event is output as a JSON object on a separate line.\n"
 	"\n"
 	"EXAMPLES:\n"
 	"    ./sslsniff              # sniff OpenSSL and GnuTLS functions\n"
@@ -66,11 +68,10 @@ const char argp_program_doc[] =
 	"    ./sslsniff --no-openssl # don't show OpenSSL calls\n"
 	"    ./sslsniff --no-gnutls  # don't show GnuTLS calls\n"
 	"    ./sslsniff --no-nss     # don't show NSS calls\n"
-	"    ./sslsniff --hexdump    # show data as hex instead of trying to "
-	"decode it as UTF-8\n"
-	"    ./sslsniff -x           # show process UID and TID\n"
-	"    ./sslsniff -l           # show function latency\n"
-	"    ./sslsniff -l --handshake  # show SSL handshake latency\n"
+	"    ./sslsniff --hexdump    # include data_hex field with hex data\n"
+	"    ./sslsniff -x           # include uid and tid fields\n"
+	"    ./sslsniff -l           # include latency_ms field\n"
+	"    ./sslsniff -l --handshake  # include handshake latency\n"
 	"    ./sslsniff --extra-lib openssl:/path/libssl.so.1.1 # sniff extra "
 	"library\n";
 
@@ -275,10 +276,9 @@ void buf_to_hex(const uint8_t *buf, size_t len, char *hex_str) {
 	}
 }
 
-// Function to print the event from the perf buffer
+// Function to print the event from the perf buffer in JSON format
 void print_event(struct probe_SSL_data_t *event, const char *evt) {
-	static unsigned long long start =
-		0;  // Use static to retain value across function calls
+	static unsigned long long start = 0;  // Use static to retain value across function calls
 	char buf[MAX_BUF_SIZE + 1] = {0};  // +1 for null terminator
 	unsigned int buf_size;
 
@@ -303,62 +303,77 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	}
 	double time_s = (double)(event->timestamp_ns - start) / 1000000000;
 
-	char lat_str[10];
-	if (event->delta_ns) {
-		snprintf(lat_str, sizeof(lat_str), "%.3f",
-				(double)event->delta_ns / 1000000);
-	} else {
-		strncpy(lat_str, "N/A", sizeof(lat_str));
-	}
-
-	char s_mark[] = "----- DATA -----";
-	char e_mark[64] = "----- END DATA -----";
-	if (buf_size < event->len) {
-		snprintf(e_mark, sizeof(e_mark),
-				"----- END DATA (TRUNCATED, %d bytes lost) -----",
-				event->len - buf_size);
-	}
-
 	char *rw_event[] = {
 		"READ/RECV",
 		"WRITE/SEND",
 		"HANDSHAKE"
 	};
 
-#define BASE_FMT "%-12s %-18.9f %-16s %-7d %-6d"
-#define EXTRA_FMT " %-7d %-7d"
-#define LATENCY_FMT " %-7s"
+	// Start JSON object
+	printf("{");
+	
+	// Basic fields
+	printf("\"function\":\"%s\",", rw_event[event->rw]);
+	printf("\"time_s\":%.9f,", time_s);
+	printf("\"timestamp_ns\":%llu,", event->timestamp_ns);
+	printf("\"comm\":\"%s\",", event->comm);
+	printf("\"pid\":%d,", event->pid);
+	printf("\"len\":%d", event->len);
 
-	if (env.extra && env.latency) {
-		printf(BASE_FMT EXTRA_FMT LATENCY_FMT, rw_event[event->rw], 
-			time_s, event->comm, event->pid,
-			event->len, event->uid, event->tid, lat_str);
-	} else if (env.extra) {
-		printf(BASE_FMT EXTRA_FMT, rw_event[event->rw], time_s, event->comm, event->pid,
-			event->len, event->uid, event->tid);
-	} else if (env.latency) {
-		printf(BASE_FMT LATENCY_FMT, rw_event[event->rw], time_s, event->comm, event->pid,
-			event->len, lat_str);
-	} else {
-		printf(BASE_FMT, rw_event[event->rw], time_s, event->comm, event->pid,
-			event->len);
+	// Extra fields if enabled
+	if (env.extra) {
+		printf(",\"uid\":%d,\"tid\":%d", event->uid, event->tid);
 	}
 
-	if (buf_size != 0) {
+	// Latency field if enabled
+	if (env.latency && event->delta_ns) {
+		printf(",\"latency_ms\":%.3f", (double)event->delta_ns / 1000000);
+	}
+
+	// Handshake field
+	printf(",\"is_handshake\":%s", event->is_handshake ? "true" : "false");
+
+	// Data field
+	if (buf_size > 0) {
 		if (env.hexdump) {
-			// 2 characters for each byte + null terminator
-			char hex_data[MAX_BUF_SIZE * 2 + 1] = {0};  
+			// Output as hex string
+			char hex_data[MAX_BUF_SIZE * 2 + 1] = {0};
 			buf_to_hex((uint8_t *)buf, buf_size, hex_data);
-			
-			printf("\n%s\n", s_mark);
-			for (size_t i = 0; i < strlen(hex_data); i += 32) {
-				printf("%.32s\n", hex_data + i);
-			}
-			printf("%s\n\n", e_mark);
+			printf(",\"data_hex\":\"%s\"", hex_data);
 		} else {
-			printf("\n%s\n%s\n%s\n\n", s_mark, buf, e_mark);
+			// Escape the buffer data for JSON
+			printf(",\"data\":\"");
+			for (unsigned int i = 0; i < buf_size; i++) {
+				char c = buf[i];
+				if (c == '"' || c == '\\') {
+					printf("\\%c", c);
+				} else if (c == '\n') {
+					printf("\\n");
+				} else if (c == '\r') {
+					printf("\\r");
+				} else if (c == '\t') {
+					printf("\\t");
+				} else if (isprint(c)) {
+					printf("%c", c);
+				} else {
+					printf("\\u%04x", (unsigned char)c);
+				}
+			}
+			printf("\"");
 		}
+		
+		// Add truncated info if data was truncated
+		if (buf_size < event->len) {
+			printf(",\"truncated\":true,\"bytes_lost\":%d", event->len - buf_size);
+		} else {
+			printf(",\"truncated\":false");
+		}
+	} else {
+		printf(",\"data\":null,\"truncated\":false");
 	}
+
+	// Close JSON object
+	printf("}\n");
 }
 
 static void handle_event(void *ctx, int cpu, void *data, __u32 data_size) {
@@ -428,16 +443,7 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// Print header
-	printf("%-12s %-18s %-16s %-7s %-7s", "FUNC", "TIME(s)", "COMM", "PID",
-			"LEN");
-	if (env.extra) {
-		printf(" %-7s %-7s", "UID", "TID");
-	}
-	if (env.latency) {
-		printf(" %-7s", "LAT(ms)");
-	}
-	printf("\n");
+	// JSON output doesn't need a header - removed the header printing
 
 	while (!exiting) {
 		err = perf_buffer__poll(pb, PERF_POLL_TIMEOUT_MS);

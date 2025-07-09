@@ -6,8 +6,8 @@
 #include <time.h>
 #include <sys/resource.h>
 #include <bpf/libbpf.h>
-#include "bootstrap.h"
-#include "bootstrap.skel.h"
+#include "process.h"
+#include "process.skel.h"
 
 static struct env {
 	bool verbose;
@@ -84,16 +84,22 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
+	printf("{");
+	printf("\"timestamp\":\"%s\",", ts);
+	printf("\"event\":\"%s\",", e->exit_event ? "EXIT" : "EXEC");
+	printf("\"comm\":\"%s\",", e->comm);
+	printf("\"pid\":%d,", e->pid);
+	printf("\"ppid\":%d", e->ppid);
+	
 	if (e->exit_event) {
-		printf("%-8s %-5s %-16s %-7d %-7d [%u]",
-		       ts, "EXIT", e->comm, e->pid, e->ppid, e->exit_code);
+		printf(",\"exit_code\":%u", e->exit_code);
 		if (e->duration_ns)
-			printf(" (%llums)", e->duration_ns / 1000000);
-		printf("\n");
+			printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
 	} else {
-		printf("%-8s %-5s %-16s %-7d %-7d %s\n",
-		       ts, "EXEC", e->comm, e->pid, e->ppid, e->filename);
+		printf(",\"filename\":\"%s\"", e->filename);
 	}
+	
+	printf("}\n");
 
 	return 0;
 }
@@ -101,7 +107,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 int main(int argc, char **argv)
 {
 	struct ring_buffer *rb = NULL;
-	struct bootstrap_bpf *skel;
+	struct process_bpf *skel;
 	int err;
 
 	/* Parse command line arguments */
@@ -117,7 +123,7 @@ int main(int argc, char **argv)
 	signal(SIGTERM, sig_handler);
 
 	/* Load and verify BPF application */
-	skel = bootstrap_bpf__open();
+	skel = process_bpf__open();
 	if (!skel) {
 		fprintf(stderr, "Failed to open and load BPF skeleton\n");
 		return 1;
@@ -127,14 +133,14 @@ int main(int argc, char **argv)
 	skel->rodata->min_duration_ns = env.min_duration_ms * 1000000ULL;
 
 	/* Load & verify BPF programs */
-	err = bootstrap_bpf__load(skel);
+	err = process_bpf__load(skel);
 	if (err) {
 		fprintf(stderr, "Failed to load and verify BPF skeleton\n");
 		goto cleanup;
 	}
 
 	/* Attach tracepoints */
-	err = bootstrap_bpf__attach(skel);
+	err = process_bpf__attach(skel);
 	if (err) {
 		fprintf(stderr, "Failed to attach BPF skeleton\n");
 		goto cleanup;
@@ -149,8 +155,6 @@ int main(int argc, char **argv)
 	}
 
 	/* Process events */
-	printf("%-8s %-5s %-16s %-7s %-7s %s\n",
-	       "TIME", "EVENT", "COMM", "PID", "PPID", "FILENAME/EXIT CODE");
 	while (!exiting) {
 		err = ring_buffer__poll(rb, 100 /* timeout, ms */);
 		/* Ctrl-C will cause -EINTR */
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
 cleanup:
 	/* Clean up */
 	ring_buffer__free(rb);
-	bootstrap_bpf__destroy(skel);
+	process_bpf__destroy(skel);
 
 	return err < 0 ? -err : 0;
 }
