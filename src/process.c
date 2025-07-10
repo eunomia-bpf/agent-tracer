@@ -136,13 +136,15 @@ static int setup_command_filters(struct process_bpf *skel, char **command_list, 
 }
 
 /* Populate initial PIDs in the eBPF map from existing processes */
-static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all)
+static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all, pid_t **tracked_pids_out)
 {
 	DIR *proc_dir;
 	struct dirent *entry;
 	pid_t pid, ppid;
 	char comm[TASK_COMM_LEN];
 	int tracked_count = 0;
+	static pid_t tracked_pids_array[MAX_TRACKED_PIDS];
+	*tracked_pids_out = tracked_pids_array;
 	
 	proc_dir = opendir("/proc");
 	if (!proc_dir) {
@@ -193,8 +195,12 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
 				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
 			}
-			if (!err)
+			if (!err) {
+				if (tracked_count < MAX_TRACKED_PIDS) {
+					tracked_pids_array[tracked_count] = pid;
+				}
 				tracked_count++;
+			}
 		}
 	}
 	
@@ -282,7 +288,8 @@ int main(int argc, char **argv)
 	}
 
 	/* Populate initial PIDs from existing processes */
-	int tracked_count = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all);
+	pid_t *tracked_pids_array;
+	int tracked_count = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all, &tracked_pids_array);
 	if (tracked_count < 0) {
 		fprintf(stderr, "Failed to populate initial PIDs\n");
 		goto cleanup;
@@ -295,7 +302,11 @@ int main(int argc, char **argv)
 		printf("\"%s\"%s", env.command_list[i], 
 		       (i < env.command_count - 1) ? "," : "");
 	}
-	printf("],\"initial_tracked_pids\":%d}\n", tracked_count);
+	printf("],\"initial_tracked_pids\":[");
+	for (int i = 0; i < tracked_count && i < MAX_TRACKED_PIDS; i++) {
+		printf("%d%s", tracked_pids_array[i], (i < tracked_count - 1) ? "," : "");
+	}
+	printf("]}\n");
 
 	/* Attach tracepoints */
 	err = process_bpf__attach(skel);

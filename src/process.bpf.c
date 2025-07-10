@@ -108,6 +108,70 @@ static __always_inline bool should_trace_process(const char *comm, pid_t pid, pi
 	return filter_ctx.found_match;
 }
 
+/* Helper function to check if any PIDs are being tracked */
+static __always_inline bool has_tracked_pids(void)
+{
+	struct pid_info *info;
+	pid_t test_pid = 1; /* Use a dummy PID for iteration */
+	
+	/* If tracing all processes, always allow bash tracing */
+	if (trace_all_processes)
+		return true;
+	
+	/* Check if tracked_pids map has any entries */
+	/* This is a simple heuristic - we could make it more sophisticated */
+	return bpf_map_lookup_elem(&tracked_pids, &test_pid) != NULL;
+}
+
+/* Bash readline uretprobe handler */
+SEC("uretprobe//usr/bin/bash:readline")
+int BPF_URETPROBE(bash_readline, const void *ret)
+{
+	struct event *e;
+	char comm[TASK_COMM_LEN];
+	u32 pid;
+
+	if (!ret)
+		return 0;
+
+	/* Check if this is actually bash */
+	bpf_get_current_comm(&comm, sizeof(comm));
+	if (comm[0] != 'b' || comm[1] != 'a' || comm[2] != 's' || comm[3] != 'h' || comm[4] != 0)
+		return 0;
+
+	/* Only trace bash commands if we have tracked PIDs or tracing all */
+	if (!has_tracked_pids())
+		return 0;
+
+	pid = bpf_get_current_pid_tgid() >> 32;
+
+	/* If not tracing all processes, check if this specific PID should be traced */
+	if (!trace_all_processes) {
+		struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
+		if (!pid_info || !pid_info->is_tracked)
+			return 0;
+	}
+
+	/* Reserve sample from BPF ringbuf */
+	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+	if (!e)
+		return 0;
+
+	/* Fill out the sample with bash readline data */
+	e->type = EVENT_TYPE_BASH_READLINE;
+	e->pid = pid;
+	e->ppid = 0; /* Not relevant for bash commands */
+	e->exit_code = 0;
+	e->duration_ns = 0;
+	e->exit_event = false;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	bpf_probe_read_user_str(&e->command, sizeof(e->command), ret);
+
+	/* Submit to user-space for post-processing */
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
 SEC("tp/sched/sched_process_exec")
 int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
@@ -145,6 +209,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 	/* fill out the sample with data */
 	task = (struct task_struct *)bpf_get_current_task();
 
+	e->type = EVENT_TYPE_PROCESS;
 	e->exit_event = false;
 	e->pid = pid;
 	e->ppid = BPF_CORE_READ(task, real_parent, tgid);
@@ -202,6 +267,7 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	/* fill out the sample with data */
 	task = (struct task_struct *)bpf_get_current_task();
 
+	e->type = EVENT_TYPE_PROCESS;
 	e->exit_event = true;
 	e->duration_ns = duration_ns;
 	e->pid = pid;

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::path::Path;
+use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessEvent {
@@ -10,6 +11,16 @@ pub struct ProcessEvent {
     pub filename: String,
     pub timestamp: u64,
     pub event_type: String,
+}
+
+impl fmt::Display for ProcessEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "🔄 Process Event: {} [PID: {}] [PPID: {}]\n   📁 File: {}\n   ⏰ Timestamp: {}\n   📊 Type: {}",
+            self.comm, self.pid, self.ppid, self.filename, self.timestamp, self.event_type
+        )
+    }
 }
 
 pub struct ProcessCollector {

@@ -7,14 +7,24 @@
 #define MAX_FILENAME_LEN 127
 #define MAX_COMMAND_FILTERS 10
 #define MAX_TRACKED_PIDS 1024
+#define MAX_COMMAND_LEN 256
+
+enum event_type {
+	EVENT_TYPE_PROCESS = 0,
+	EVENT_TYPE_BASH_READLINE = 1,
+};
 
 struct event {
+	enum event_type type;
 	int pid;
 	int ppid;
 	unsigned exit_code;
 	unsigned long long duration_ns;
 	char comm[TASK_COMM_LEN];
-	char filename[MAX_FILENAME_LEN];
+	union {
+		char filename[MAX_FILENAME_LEN];     /* for process events */
+		char command[MAX_COMMAND_LEN];       /* for bash readline events */
+	};
 	bool exit_event;
 };
 

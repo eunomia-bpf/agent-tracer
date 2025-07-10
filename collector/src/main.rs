@@ -63,13 +63,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Starting process binary...");
         match process_collector.collect_events().await {
             Ok(events) => {
-                println!("Process events collected: {}", events.len());
+                println!("🔄 Process events collected: {}", events.len());
+                println!("{}", "=".repeat(60));
                 for event in events {
-                    println!("Process event: {:?}", event);
+                    println!("{}", event);
+                    println!("{}", "-".repeat(60));
                 }
             }
             Err(e) => {
-                println!("Error collecting process events: {}", e);
+                println!("❌ Error collecting process events: {}", e);
             }
         }
     });
@@ -79,13 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Starting sslsniff binary...");
         match sslsniff_collector.collect_events().await {
             Ok(events) => {
-                println!("SSL events collected: {}", events.len());
+                println!("🔐 SSL events collected: {}", events.len());
+                println!("{}", "=".repeat(60));
                 for event in events {
-                    println!("SSL event: {:?}", event);
+                    println!("{}", event);
+                    println!("{}", "-".repeat(60));
                 }
             }
             Err(e) => {
-                println!("Error collecting SSL events: {}", e);
+                println!("❌ Error collecting SSL events: {}", e);
             }
         }
     });

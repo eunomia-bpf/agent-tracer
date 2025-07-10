@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::path::Path;
+use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SslEvent {
@@ -11,6 +12,22 @@ pub struct SslEvent {
     pub event_type: String,
     pub data: String,
     pub data_len: usize,
+}
+
+impl fmt::Display for SslEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let truncated_data = if self.data.len() > 100 {
+            format!("{}...", &self.data[..100])
+        } else {
+            self.data.clone()
+        };
+        
+        write!(
+            f,
+            "🔐 SSL Event: {} [PID: {}] [FD: {}]\n   📊 Type: {}\n   ⏰ Timestamp: {}\n   📦 Data ({} bytes): {}",
+            self.comm, self.pid, self.fd, self.event_type, self.timestamp, self.data_len, truncated_data
+        )
+    }
 }
 
 pub struct SslSniffCollector {
