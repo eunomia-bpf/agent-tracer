@@ -1,13 +1,37 @@
 use clap::{Parser, Subcommand};
-
-mod binary_extractor;
-mod framework;
-mod process;
-mod sslsniff;
-
-use binary_extractor::BinaryExtractor;
-use framework::{SslRunner, ProcessRunner, RawAnalyzer, Runner};
+use framework::{SslRunner, ProcessRunner, RawAnalyzer, Runner, RunnerError};
 use futures::stream::StreamExt;
+use std::path::PathBuf;
+
+mod framework;
+
+// Helper function to convert RunnerError to Box<dyn std::error::Error>
+fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
+    e as Box<dyn std::error::Error>
+}
+
+// Simple binary path provider for testing
+struct BinaryPaths {
+    sslsniff_path: PathBuf,
+    process_path: PathBuf,
+}
+
+impl BinaryPaths {
+    fn new() -> Self {
+        Self {
+            sslsniff_path: PathBuf::from("../src/sslsniff"),
+            process_path: PathBuf::from("../src/process"),
+        }
+    }
+    
+    fn get_sslsniff_path(&self) -> &PathBuf {
+        &self.sslsniff_path
+    }
+    
+    fn get_process_path(&self) -> &PathBuf {
+        &self.process_path
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "collector")]
@@ -19,25 +43,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run process tracer (legacy)
-    Process {
-        /// Additional arguments to pass to the process tracer
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
-    /// Run SSL sniffer (legacy)
-    Sslsniff {
-        /// Additional arguments to pass to the SSL sniffer
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
-    /// Run both tracers (legacy)
-    Both {
-        /// Additional arguments to pass to both tracers
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
-    /// Demo the new framework (simulation mode)
+    /// Demo the new framework with real binaries
     Demo,
     /// Test SSL runner with real binary
     SslReal,
@@ -46,11 +52,7 @@ enum Commands {
     /// Test both runners with real binaries
     BothReal,
     /// Test framework with raw analyzer output
-    TestRaw {
-        /// Use real binaries instead of simulation
-        #[arg(long)]
-        real: bool,
-    },
+    TestRaw,
 }
 
 #[tokio::main]
@@ -59,154 +61,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Starting collector...");
     
+    let binary_paths = BinaryPaths::new();
+    
     match cli.command {
         Commands::Demo => {
-            run_framework_demo().await?;
+            run_framework_demo(&binary_paths).await.map_err(convert_runner_error)?;
         }
         Commands::SslReal => {
-            let extractor = BinaryExtractor::new().await?;
-            run_ssl_real(&extractor).await?;
+            run_ssl_real(&binary_paths).await.map_err(convert_runner_error)?;
         }
         Commands::ProcessReal => {
-            let extractor = BinaryExtractor::new().await?;
-            run_process_real(&extractor).await?;
+            run_process_real(&binary_paths).await.map_err(convert_runner_error)?;
         }
         Commands::BothReal => {
-            let extractor = BinaryExtractor::new().await?;
-            run_both_real(&extractor).await?;
+            run_both_real(&binary_paths).await?;
         }
-        Commands::TestRaw { real } => {
-            if real {
-                let extractor = BinaryExtractor::new().await?;
-                run_test_raw_real(&extractor).await?;
-            } else {
-                run_test_raw_simulation().await?;
-            }
-        }
-        _ => {
-            let extractor = BinaryExtractor::new().await?;
-            
-            match cli.command {
-                Commands::Process { args } => {
-                    run_process_tracer(&extractor, args).await?;
-                }
-                Commands::Sslsniff { args } => {
-                    run_sslsniff_tracer(&extractor, args).await?;
-                }
-                Commands::Both { args } => {
-                    run_both_tracers(&extractor, args).await?;
-                }
-                _ => unreachable!(),
-            }
+        Commands::TestRaw => {
+            run_test_raw_real(&binary_paths).await.map_err(convert_runner_error)?;
         }
     }
-    
-    Ok(())
-}
-
-async fn run_process_tracer(
-    extractor: &BinaryExtractor,
-    _args: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let process_collector = process::ProcessCollector::new(extractor.get_process_path());
-    
-    println!("Starting process binary...");
-    match process_collector.collect_events().await {
-        Ok(events) => {
-            println!("🔄 Process events collected: {}", events.len());
-            println!("{}", "=".repeat(60));
-            for event in events {
-                println!("{}", event);
-                println!("{}", "-".repeat(60));
-            }
-        }
-        Err(e) => {
-            println!("❌ Error collecting process events: {}", e);
-        }
-    }
-    
-    Ok(())
-}
-
-async fn run_sslsniff_tracer(
-    extractor: &BinaryExtractor,
-    _args: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let sslsniff_collector = sslsniff::SslSniffCollector::new(extractor.get_sslsniff_path());
-    
-    println!("Starting sslsniff binary...");
-    match sslsniff_collector.collect_events().await {
-        Ok(events) => {
-            println!("🔐 SSL events collected: {}", events.len());
-            println!("{}", "=".repeat(60));
-            for event in events {
-                println!("{}", event);
-                println!("{}", "-".repeat(60));
-            }
-        }
-        Err(e) => {
-            println!("❌ Error collecting SSL events: {}", e);
-        }
-    }
-    
-    Ok(())
-}
-
-async fn run_both_tracers(
-    extractor: &BinaryExtractor,
-    _args: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let process_collector = process::ProcessCollector::new(extractor.get_process_path());
-    let sslsniff_collector = sslsniff::SslSniffCollector::new(extractor.get_sslsniff_path());
-    
-    let process_handle = tokio::spawn(async move {
-        println!("Starting process binary...");
-        match process_collector.collect_events().await {
-            Ok(events) => {
-                println!("🔄 Process events collected: {}", events.len());
-                println!("{}", "=".repeat(60));
-                for event in events {
-                    println!("{}", event);
-                    println!("{}", "-".repeat(60));
-                }
-            }
-            Err(e) => {
-                println!("❌ Error collecting process events: {}", e);
-            }
-        }
-    });
-    
-    let sslsniff_handle = tokio::spawn(async move {
-        println!("Starting sslsniff binary...");
-        match sslsniff_collector.collect_events().await {
-            Ok(events) => {
-                println!("🔐 SSL events collected: {}", events.len());
-                println!("{}", "=".repeat(60));
-                for event in events {
-                    println!("{}", event);
-                    println!("{}", "-".repeat(60));
-                }
-            }
-            Err(e) => {
-                println!("❌ Error collecting SSL events: {}", e);
-            }
-        }
-    });
-    
-    let _ = tokio::join!(process_handle, sslsniff_handle);
-    
-    println!("Both binaries have completed execution");
     
     Ok(())
 }
 
 /// Demo function showing the new framework in action
-async fn run_framework_demo() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
     println!("🚀 Framework Demo: SSL Runner with Raw Analyzer");
     println!("{}", "=".repeat(60));
     
     // Create and configure an SSL runner with raw analyzer
-    let mut ssl_runner = SslRunner::new()
+    let mut ssl_runner = SslRunner::from_binary_extractor(binary_paths.get_sslsniff_path())
         .with_id("demo-ssl".to_string())
         .port(443)
         .interface("eth0".to_string())
@@ -226,7 +110,7 @@ async fn run_framework_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "=".repeat(60));
     
     // Create and configure a process runner with raw analyzer
-    let mut process_runner = ProcessRunner::new()
+    let mut process_runner = ProcessRunner::from_binary_extractor(binary_paths.get_process_path())
         .with_id("demo-process".to_string())
         .name_filter("python".to_string())
         .cpu_threshold(80.0)
@@ -251,11 +135,11 @@ async fn run_framework_demo() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test SSL runner with real binary
-async fn run_ssl_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_ssl_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
     println!("🔐 Testing SSL Runner with Real Binary");
     println!("{}", "=".repeat(60));
     
-    let mut ssl_runner = SslRunner::from_binary_extractor(extractor.get_sslsniff_path())
+    let mut ssl_runner = SslRunner::from_binary_extractor(binary_paths.get_sslsniff_path())
         .with_id("real-ssl".to_string())
         .add_analyzer(Box::new(RawAnalyzer::new_with_options(false)));
     
@@ -271,11 +155,11 @@ async fn run_ssl_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::er
 }
 
 /// Test process runner with real binary
-async fn run_process_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_process_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
     println!("🔄 Testing Process Runner with Real Binary");
     println!("{}", "=".repeat(60));
     
-    let mut process_runner = ProcessRunner::from_binary_extractor(extractor.get_process_path())
+    let mut process_runner = ProcessRunner::from_binary_extractor(binary_paths.get_process_path())
         .with_id("real-process".to_string())
         .add_analyzer(Box::new(RawAnalyzer::new_with_options(false)));
     
@@ -291,12 +175,12 @@ async fn run_process_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std
 }
 
 /// Test both runners with real binaries
-async fn run_both_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Testing Both Runners with Real Binaries");
     println!("{}", "=".repeat(60));
     
     let ssl_handle = {
-        let ssl_path = extractor.get_sslsniff_path().to_path_buf();
+        let ssl_path = binary_paths.get_sslsniff_path().to_path_buf();
         tokio::spawn(async move {
             let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path)
                 .with_id("real-ssl".to_string())
@@ -320,7 +204,7 @@ async fn run_both_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::e
     };
     
     let process_handle = {
-        let process_path = extractor.get_process_path().to_path_buf();
+        let process_path = binary_paths.get_process_path().to_path_buf();
         tokio::spawn(async move {
             let mut process_runner = ProcessRunner::from_binary_extractor(process_path)
                 .with_id("real-process".to_string())
@@ -354,13 +238,13 @@ async fn run_both_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::e
 }
 
 /// Test framework with raw analyzer output (real binaries)
-async fn run_test_raw_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_test_raw_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
     println!("🧪 Testing Framework with Raw Analyzer (Real Binaries)");
     println!("{}", "=".repeat(60));
     
     // Test SSL with raw output (printing to stdout)
     println!("📡 SSL Raw Output:");
-    let mut ssl_runner = SslRunner::from_binary_extractor(extractor.get_sslsniff_path())
+    let mut ssl_runner = SslRunner::from_binary_extractor(binary_paths.get_sslsniff_path())
         .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
     
     let ssl_stream = ssl_runner.run().await?;
@@ -368,38 +252,7 @@ async fn run_test_raw_real(extractor: &BinaryExtractor) -> Result<(), Box<dyn st
     
     println!();
     println!("🖥️  Process Raw Output:");
-    let mut process_runner = ProcessRunner::from_binary_extractor(extractor.get_process_path())
-        .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
-    
-    let process_stream = process_runner.run().await?;
-    let process_events: Vec<_> = process_stream.collect().await;
-    
-    println!();
-    println!("✅ Raw output test completed!");
-    println!("   - SSL events: {}", ssl_events.len());
-    println!("   - Process events: {}", process_events.len());
-    
-    Ok(())
-}
-
-/// Test framework with raw analyzer output (simulation)
-async fn run_test_raw_simulation() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🧪 Testing Framework with Raw Analyzer (Simulation)");
-    println!("{}", "=".repeat(60));
-    
-    // Test SSL with raw output (printing to stdout)
-    println!("📡 SSL Raw Output (Simulated):");
-    let mut ssl_runner = SslRunner::new()
-        .simulation(true)
-        .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
-    
-    let ssl_stream = ssl_runner.run().await?;
-    let ssl_events: Vec<_> = ssl_stream.collect().await;
-    
-    println!();
-    println!("🖥️  Process Raw Output (Simulated):");
-    let mut process_runner = ProcessRunner::new()
-        .simulation(true)
+    let mut process_runner = ProcessRunner::from_binary_extractor(binary_paths.get_process_path())
         .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
     
     let process_stream = process_runner.run().await?;

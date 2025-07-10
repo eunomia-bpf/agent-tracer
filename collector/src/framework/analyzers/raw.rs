@@ -1,4 +1,4 @@
-use super::Analyzer;
+use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
@@ -35,7 +35,7 @@ impl Default for RawAnalyzer {
 
 #[async_trait]
 impl Analyzer for RawAnalyzer {
-    async fn process(&mut self, stream: EventStream) -> Result<EventStream, Box<dyn std::error::Error>> {
+    async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
         let print_to_stdout = self.print_to_stdout;
         
         let processed_stream = stream.map(move |event| {

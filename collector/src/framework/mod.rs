@@ -7,6 +7,6 @@ pub mod analyzers;
 #[allow(unused_imports)]
 pub use core::Event;
 #[allow(unused_imports)]
-pub use runners::{Runner, SslRunner, ProcessRunner, EventStream};
+pub use runners::{Runner, SslRunner, ProcessRunner, EventStream, RunnerError};
 #[allow(unused_imports)]
 pub use analyzers::{Analyzer, RawAnalyzer}; 
