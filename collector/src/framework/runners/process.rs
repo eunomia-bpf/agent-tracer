@@ -3,9 +3,54 @@ use super::common::{BinaryExecutor, AnalyzerProcessor, IntoFrameworkEvent};
 use crate::framework::core::Event;
 use crate::framework::analyzers::Analyzer;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
 use std::path::Path;
 use uuid::Uuid;
+
+fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor, Unexpected};
+    use std::fmt;
+    
+    struct TimestampVisitor;
+    
+    impl<'de> Visitor<'de> for TimestampVisitor {
+        type Value = u64;
+        
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a timestamp as u64 or time string")
+        }
+        
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Parse time string like "18:47:38" and convert to seconds since midnight
+            let parts: Vec<&str> = value.split(':').collect();
+            if parts.len() == 3 {
+                let hours: u64 = parts[0].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
+                let minutes: u64 = parts[1].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
+                let seconds: u64 = parts[2].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
+                
+                // Convert to seconds since midnight (simple conversion for now)
+                Ok(hours * 3600 + minutes * 60 + seconds)
+            } else {
+                Err(de::Error::invalid_value(Unexpected::Str(value), &self))
+            }
+        }
+    }
+    
+    deserializer.deserialize_any(TimestampVisitor)
+}
 
 /// Process event data structure from process binary (matches original ProcessEvent)
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -14,7 +59,9 @@ pub struct ProcessEventData {
     pub ppid: u32,
     pub comm: String,
     pub filename: String,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u64,
+    #[serde(rename = "event")]
     pub event_type: String,
 }
 
@@ -90,8 +137,8 @@ impl ProcessRunner {
 #[async_trait]
 impl Runner for ProcessRunner {
     async fn run(&mut self) -> Result<EventStream, RunnerError> {
-        let events = self.executor.collect_events::<ProcessEventData>("process").await?;
-        AnalyzerProcessor::process_through_analyzers(events, &mut self.analyzers).await
+        let stream = self.executor.collect_events::<ProcessEventData>("process").await?;
+        AnalyzerProcessor::process_through_analyzers(stream, &mut self.analyzers).await
     }
 
     fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
@@ -192,6 +239,8 @@ mod tests {
     #[ignore = "requires real binary and may need sudo privileges"]
     async fn test_process_runner_with_real_binary() {
         use std::path::Path;
+        use std::time::{Duration, Instant};
+        use tokio::time::{timeout, interval};
         
         let binary_path = "../src/process";
         
@@ -201,8 +250,12 @@ mod tests {
             eprintln!("   Build the binary first: cd ../src && make process");
             return;
         }
-        
+
+        let start_time = Instant::now();
         println!("🧪 Testing ProcessRunner with real binary at {}", binary_path);
+        println!("   ⏱️  Runtime: 30 seconds with live streaming output");
+        println!("   🔄 Will terminate the process automatically after timeout");
+        println!("{}", "=".repeat(60));
         
         // Create runner with real binary
         let mut runner = ProcessRunner::from_binary_extractor(binary_path)
@@ -210,50 +263,114 @@ mod tests {
             .name_filter(".*".to_string()) // Match any process name
             .add_analyzer(Box::new(crate::framework::analyzers::RawAnalyzer::new_with_options(false)));
         
-        // Run the binary and collect events
+        // Run the binary and collect events for 30 seconds
         match runner.run().await {
-            Ok(stream) => {
-                let events: Vec<_> = stream.collect().await;
+            Ok(mut stream) => {
+                println!("✅ ProcessRunner started successfully! ({}s)", start_time.elapsed().as_secs());
+                println!("📡 Streaming process events live for 30 seconds...");
+                println!();
                 
-                println!("✅ ProcessRunner executed successfully!");
-                println!("   Collected {} events", events.len());
+                let mut event_count = 0;
+                let mut status_interval = interval(Duration::from_secs(5));
+                let mut last_event_time = Instant::now();
                 
-                // Print first few events for verification
-                for (i, event) in events.iter().take(3).enumerate() {
-                    println!("   Event {}: {} - {}", i + 1, event.event_type, event.source);
-                    println!("     Data: {}", event.data);
+                // Run for 30 seconds with streaming output
+                let result = timeout(Duration::from_secs(30), async {
+                    loop {
+                        tokio::select! {
+                            event_opt = stream.next() => {
+                                match event_opt {
+                                    Some(event) => {
+                                        event_count += 1;
+                                        last_event_time = Instant::now();
+                                        let runtime = start_time.elapsed().as_secs();
+                                        
+                                        // Live streaming output with runtime
+                                        println!("[{:02}s] 🔄 Event #{}: {} - {} (PID: {})", 
+                                            runtime,
+                                            event_count, 
+                                            event.event_type, 
+                                            event.data.get("comm").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                            event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        );
+                                        
+                                        // Show filename for exec events
+                                        if event.event_type == "exec" {
+                                            if let Some(filename) = event.data.get("filename").and_then(|v| v.as_str()) {
+                                                println!("     📁 File: {}", filename);
+                                            }
+                                        }
+                                        
+                                        // Print full event details for first few events
+                                        if event_count <= 2 {
+                                            println!("     🔍 Full event data:");
+                                            println!("        Source: {}", event.source);
+                                            println!("        Timestamp: {}", event.timestamp);
+                                            println!("        Data: {}", event.data);
+                                            println!();
+                                        }
+                                        
+                                        // Verify event structure
+                                        assert_eq!(event.source, "process");
+                                        assert!(!event.id.is_empty());
+                                        assert!(event.timestamp > 0);
+                                        assert!(!event.event_type.is_empty());
+                                        assert!(event.data.get("pid").is_some());
+                                        assert!(event.data.get("ppid").is_some());
+                                        assert!(event.data.get("comm").is_some());
+                                        assert!(event.data.get("filename").is_some());
+                                    }
+                                    None => {
+                                        println!("[{:02}s] 📡 Event stream ended naturally", start_time.elapsed().as_secs());
+                                        break;
+                                    }
+                                }
+                            }
+                            _ = status_interval.tick() => {
+                                let runtime = start_time.elapsed().as_secs();
+                                let time_since_last = last_event_time.elapsed().as_secs();
+                                println!("[{:02}s] ⏱️  Status: {} events collected, last event {}s ago", 
+                                    runtime, event_count, time_since_last);
+                            }
+                        }
+                    }
+                }).await;
+                
+                let total_runtime = start_time.elapsed();
+                println!();
+                
+                match result {
+                    Ok(_) => println!("📡 Event stream completed naturally after {:.1}s", total_runtime.as_secs_f32()),
+                    Err(_) => {
+                        println!("⏰ 30-second timeout reached - terminating process");
+                        println!("🔪 Process killed automatically");
+                    }
                 }
                 
-                if events.len() > 3 {
-                    println!("   ... and {} more events", events.len() - 3);
-                }
+                println!("{}", "=".repeat(60));
+                println!("✅ ProcessRunner test completed!");
+                println!("   📊 Total events: {}", event_count);
+                println!("   ⏱️  Total runtime: {:.2}s", total_runtime.as_secs_f32());
+                println!("   📈 Event rate: {:.1} events/sec", 
+                    event_count as f32 / total_runtime.as_secs_f32());
                 
-                // Verify event structure
-                for event in &events {
-                    assert_eq!(event.source, "process");
-                    assert!(!event.id.is_empty());
-                    assert!(event.timestamp > 0);
-                    assert!(!event.event_type.is_empty());
-                    
-                    // Verify expected process event fields exist
-                    assert!(event.data.get("pid").is_some());
-                    assert!(event.data.get("ppid").is_some());
-                    assert!(event.data.get("comm").is_some());
-                    assert!(event.data.get("filename").is_some());
-                    assert!(event.data.get("event_type").is_some());
+                if event_count == 0 {
+                    println!();
+                    println!("⚠️  No events captured during test period!");
+                    println!("   💡 Try running commands in another terminal:");
+                    println!("   💡 ls, ps, cat /proc/version, etc.");
                 }
-                
-                println!("✅ All events have correct structure");
             }
             Err(e) => {
-                eprintln!("❌ ProcessRunner failed: {}", e);
-                eprintln!("   This might be due to:");
-                eprintln!("   - Insufficient privileges (try with sudo)");
-                eprintln!("   - Binary not compiled correctly");
-                eprintln!("   - eBPF program loading issues");
+                let runtime = start_time.elapsed();
+                eprintln!("❌ ProcessRunner failed after {:.2}s: {}", runtime.as_secs_f32(), e);
+                eprintln!("   Possible causes:");
+                eprintln!("   - Insufficient privileges (try: sudo cargo test ...)");
+                eprintln!("   - Binary compilation failed");
+                eprintln!("   - eBPF/kernel support missing");
+                eprintln!("   - Missing kernel headers");
                 
-                // Don't panic, just return - this allows the test to "pass" 
-                // even if the binary can't run due to environmental issues
+                // Don't panic - allow test to pass even with environmental issues
                 return;
             }
         }
