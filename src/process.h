@@ -5,6 +5,8 @@
 
 #define TASK_COMM_LEN 16
 #define MAX_FILENAME_LEN 127
+#define MAX_COMMAND_FILTERS 10
+#define MAX_TRACKED_PIDS 1024
 
 struct event {
 	int pid;
@@ -14,6 +16,17 @@ struct event {
 	char comm[TASK_COMM_LEN];
 	char filename[MAX_FILENAME_LEN];
 	bool exit_event;
+};
+
+struct command_filter {
+	char comm[TASK_COMM_LEN];
+	bool enabled;
+};
+
+struct pid_info {
+	pid_t pid;
+	pid_t ppid;
+	bool is_tracked;
 };
 
 #endif /* __PROCESS_H */

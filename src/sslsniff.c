@@ -496,8 +496,6 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// JSON output doesn't need a header - removed the header printing
-
 	while (!exiting) {
 		err = ring_buffer__poll(rb, PERF_POLL_TIMEOUT_MS);
 		if (err < 0 && err != -EINTR) {

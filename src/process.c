@@ -8,30 +8,46 @@
 #include <bpf/libbpf.h>
 #include "process.h"
 #include "process.skel.h"
+#include "process_utils.h"
+
+#define MAX_COMMAND_LIST 256
 
 static struct env {
 	bool verbose;
 	long min_duration_ms;
+	char *command_list[MAX_COMMAND_LIST];
+	int command_count;
+	bool trace_all;
 } env;
 
-const char *argp_program_version = "bootstrap 0.0";
+const char *argp_program_version = "process-tracer 1.0";
 const char *argp_program_bug_address = "<bpf@vger.kernel.org>";
 const char argp_program_doc[] =
-"BPF bootstrap demo application.\n"
+"BPF process tracer with command filtering.\n"
 "\n"
-"It traces process start and exits and shows associated \n"
-"information (filename, process duration, PID and PPID, etc).\n"
+"It traces process start and exits for specified commands and their subprocesses.\n"
+"Shows associated information (filename, process duration, PID and PPID, etc).\n"
+"By default, traces ALL processes if no commands are specified.\n"
 "\n"
-"USAGE: ./bootstrap [-d <min-duration-ms>] [-v]\n";
+"USAGE: ./process [-d <min-duration-ms>] [-c <command1,command2,...>] [-v]\n"
+"\n"
+"EXAMPLES:\n"
+"  ./process                        # Trace all processes\n"
+"  ./process -c \"claude,python\"  # Trace processes containing 'claude' or 'python'\n"
+"  ./process -c \"ssh\" -d 1000   # Trace ssh processes lasting > 1 second\n";
 
 static const struct argp_option opts[] = {
 	{ "verbose", 'v', NULL, 0, "Verbose debug output" },
 	{ "duration", 'd', "DURATION-MS", 0, "Minimum process duration (ms) to report" },
+	{ "commands", 'c', "COMMAND-LIST", 0, "Comma-separated list of commands to trace (e.g., \"claude,python\"). If not specified, traces all processes." },
 	{},
 };
 
 static error_t parse_arg(int key, char *arg, struct argp_state *state)
 {
+	char *token;
+	char *saveptr;
+	
 	switch (key) {
 	case 'v':
 		env.verbose = true;
@@ -43,6 +59,35 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 			fprintf(stderr, "Invalid duration: %s\n", arg);
 			argp_usage(state);
 		}
+		break;
+	case 'c':
+		/* Parse comma-separated command list */
+		char *arg_copy = strdup(arg);
+		if (!arg_copy) {
+			fprintf(stderr, "Memory allocation failed\n");
+			return ARGP_ERR_UNKNOWN;
+		}
+		
+		token = strtok_r(arg_copy, ",", &saveptr);
+		while (token && env.command_count < MAX_COMMAND_LIST) {
+			/* Remove leading/trailing whitespace */
+			while (*token == ' ' || *token == '\t') token++;
+			char *end = token + strlen(token) - 1;
+			while (end > token && (*end == ' ' || *end == '\t')) end--;
+			*(end + 1) = '\0';
+			
+			if (strlen(token) > 0) {
+				env.command_list[env.command_count] = strdup(token);
+				if (!env.command_list[env.command_count]) {
+					fprintf(stderr, "Memory allocation failed\n");
+					free(arg_copy);
+					return ARGP_ERR_UNKNOWN;
+				}
+				env.command_count++;
+			}
+			token = strtok_r(NULL, ",", &saveptr);
+		}
+		free(arg_copy);
 		break;
 	case ARGP_KEY_ARG:
 		argp_usage(state);
@@ -115,6 +160,20 @@ int main(int argc, char **argv)
 	if (err)
 		return err;
 
+	/* Determine if we should trace all processes (default if no commands specified) */
+	env.trace_all = (env.command_count == 0);
+
+	printf("Process tracer starting...\n");
+	if (env.trace_all) {
+		printf("Configured to trace ALL processes (no filter specified)\n");
+	} else {
+		printf("Configured to trace processes containing: ");
+		for (int i = 0; i < env.command_count; i++) {
+			printf("'%s'%s", env.command_list[i], 
+			       (i < env.command_count - 1) ? ", " : "\n");
+		}
+	}
+
 	/* Set up libbpf errors and debug info callback */
 	libbpf_set_print(libbpf_print_fn);
 
@@ -131,11 +190,28 @@ int main(int argc, char **argv)
 
 	/* Parameterize BPF code with minimum duration parameter */
 	skel->rodata->min_duration_ns = env.min_duration_ms * 1000000ULL;
+	skel->rodata->trace_all_processes = env.trace_all;
 
 	/* Load & verify BPF programs */
 	err = process_bpf__load(skel);
 	if (err) {
 		fprintf(stderr, "Failed to load and verify BPF skeleton\n");
+		goto cleanup;
+	}
+
+	/* Setup command filters if not tracing all */
+	if (!env.trace_all) {
+		err = setup_command_filters(skel, env.command_list, env.command_count);
+		if (err) {
+			fprintf(stderr, "Failed to setup command filters\n");
+			goto cleanup;
+		}
+	}
+
+	/* Populate initial PIDs from existing processes */
+	err = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all);
+	if (err) {
+		fprintf(stderr, "Failed to populate initial PIDs\n");
 		goto cleanup;
 	}
 
@@ -153,6 +229,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Failed to create ring buffer\n");
 		goto cleanup;
 	}
+
+	printf("Tracing started. Press Ctrl+C to stop.\n");
 
 	/* Process events */
 	while (!exiting) {
@@ -172,6 +250,11 @@ cleanup:
 	/* Clean up */
 	ring_buffer__free(rb);
 	process_bpf__destroy(skel);
+	
+	/* Free allocated command strings */
+	for (int i = 0; i < env.command_count; i++) {
+		free(env.command_list[i]);
+	}
 
 	return err < 0 ? -err : 0;
 }

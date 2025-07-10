@@ -31,7 +31,7 @@ CFLAGS += $(ASAN_FLAGS)
 ALL_LDFLAGS += $(ASAN_FLAGS)
 endif
 
-APPS = sslsniff process # minimal minimal_legacy uprobe kprobe fentry usdt sockfilter tc ksyscall
+APPS = sslsniff process test_process_utils # minimal minimal_legacy uprobe kprobe fentry usdt sockfilter tc ksyscall
 
 CARGO ?= $(shell which cargo)
 ifeq ($(strip $(CARGO)),)
@@ -96,12 +96,19 @@ help:
 	@echo "Available targets:"
 	@echo "  all          - Build all applications"
 	@echo "  sslsniff     - Build sslsniff only"
+	@echo "  process      - Build process tracer only"
+	@echo "  test         - Build and run tests"
 	@echo "  debug        - Build all applications with AddressSanitizer"
 	@echo "  sslsniff-debug - Build sslsniff with AddressSanitizer"
 	@echo "  clean        - Clean build artifacts"
 	@echo ""
 	@echo "Build with AddressSanitizer manually:"
 	@echo "  make ASAN=1 sslsniff"
+
+.PHONY: test
+test: test_process_utils
+	@echo "Running process_utils tests..."
+	@./test_process_utils
 
 $(OUTPUT) $(OUTPUT)/libbpf $(BPFTOOL_OUTPUT):
 	$(call msg,MKDIR,$@)
@@ -146,7 +153,12 @@ $(OUTPUT)/%.skel.h: $(OUTPUT)/%.bpf.o | $(OUTPUT) $(BPFTOOL)
 	$(Q)$(BPFTOOL) gen skeleton $< > $@
 
 # Build user-space code
-$(patsubst %,$(OUTPUT)/%.o,$(APPS)): %.o: %.skel.h
+$(patsubst %,$(OUTPUT)/%.o,$(filter-out test_process_utils,$(APPS))): %.o: %.skel.h
+
+# Special rule for test program (no BPF skeleton needed)
+$(OUTPUT)/test_process_utils.o: test_process_utils.c $(wildcard *.h) | $(OUTPUT)
+	$(call msg,CC,$@)
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OUTPUT)/%.o: %.c $(wildcard %.h) | $(OUTPUT)
 	$(call msg,CC,$@)
@@ -157,9 +169,14 @@ $(patsubst %,$(OUTPUT)/%.o,$(BZS_APPS)): $(LIBBLAZESYM_HEADER)
 $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 
 # Build application binary
-$(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) | $(OUTPUT)
+$(filter-out test_process_utils,$(APPS)): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) -lelf -lz -o $@
+
+# Special rule for test program (no libbpf needed)
+test_process_utils: $(OUTPUT)/test_process_utils.o | $(OUTPUT)
+	$(call msg,BINARY,$@)
+	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) -o $@
 
 # delete failed targets
 .DELETE_ON_ERROR:
