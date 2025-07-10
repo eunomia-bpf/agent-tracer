@@ -27,24 +27,30 @@ impl BinaryExecutor {
     where
         T: DeserializeOwned + IntoFrameworkEvent + Send + 'static,
     {
-        debug!("Starting {} binary: {}", source, self.binary_path);
+        let source_name = source.to_string(); // Own the source name
+        debug!("Starting {} binary: {}", source_name, self.binary_path);
         
-        // Spawn the process with piped stdout
-        let mut child = TokioCommand::new(&self.binary_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn {} binary: {}", source, e))?;
-
+        let mut cmd = TokioCommand::new(&self.binary_path);
+        cmd.stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+        
+        let mut child = cmd.spawn()
+            .map_err(|e| Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other, 
+                format!("Failed to start {} binary: {}", source_name, e)
+            )) as RunnerError)?;
+            
         let stdout = child.stdout.take()
-            .ok_or_else(|| format!("Failed to capture stdout for {} binary", source))?;
-
-        debug!("{} binary started with PID: {:?}", source, child.id());
+            .ok_or_else(|| Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other, 
+                "Failed to get stdout"
+            )) as RunnerError)?;
         
-        let source_name = source.to_string();
+        if let Some(pid) = child.id() {
+            debug!("{} binary started with PID: Some({})", source_name, pid);
+        }
         
-        // Create a stream that reads lines from stdout and converts them to events
-        let event_stream = async_stream::stream! {
+        let stream = async_stream::stream! {
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
             let mut line_count = 0;
@@ -53,6 +59,7 @@ impl BinaryExecutor {
             
             loop {
                 line.clear();
+                
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
                         debug!("{} binary stdout closed (EOF)", source_name);
@@ -71,40 +78,106 @@ impl BinaryExecutor {
                                 }
                             );
                             
-                            // Only process lines that are actual events (not config or other types)
-                            if trimmed.contains("\"type\":\"event\"") {
+                            // Try to parse as JSON for any runner type
+                            if trimmed.starts_with('{') && trimmed.ends_with('}') {
                                 match serde_json::from_str::<T>(trimmed) {
                                     Ok(event_data) => {
-                                        let event = event_data.into_framework_event(&source_name);
-                                        debug!("Parsed event: {} - {}", event.event_type, event.source);
-                                        yield event;
+                                        let event_type = match source_name.as_str() {
+                                            "process" => {
+                                                // For process events, try to get the event type
+                                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                                    if let Some(event) = v.get("event") {
+                                                        if let Some(event_str) = event.as_str() {
+                                                            event_str.to_string()
+                                                        } else {
+                                                            "unknown".to_string()
+                                                        }
+                                                    } else {
+                                                        "unknown".to_string()
+                                                    }
+                                                } else {
+                                                    "unknown".to_string()
+                                                }
+                                            },
+                                            "ssl" => {
+                                                // For SSL events, try to get the function type
+                                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                                    if let Some(function) = v.get("function") {
+                                                        if let Some(function_str) = function.as_str() {
+                                                            function_str.to_string()
+                                                        } else {
+                                                            "unknown".to_string()
+                                                        }
+                                                    } else {
+                                                        "unknown".to_string()
+                                                    }
+                                                } else {
+                                                    "unknown".to_string()
+                                                }
+                                            },
+                                            _ => "unknown".to_string()
+                                        };
+                                        
+                                        debug!("Parsed event: {} - {}", event_type, source_name);
+                                        
+                                        yield event_data.into_framework_event(&source_name);
                                     }
                                     Err(e) => {
-                                        debug!("Failed to parse JSON on line {}: {} - Raw: {}", 
-                                            line_count, e, trimmed);
+                                        log::warn!("Failed to parse {} event from line {}: {} - Line: {}", 
+                                            source_name, line_count, e,
+                                            if trimmed.len() > 200 { 
+                                                format!("{}...", &trimmed[..200]) 
+                                            } else { 
+                                                trimmed.to_string() 
+                                            }
+                                        );
                                     }
                                 }
                             } else {
-                                debug!("Skipping non-event line {}: {}", line_count, 
-                                    if trimmed.contains("\"type\":\"config\"") { "config" } else { "unknown" });
+                                log::warn!("Skipping non-JSON line {} from {} binary: {}", 
+                                    line_count, source_name, 
+                                    if trimmed.len() > 100 { 
+                                        format!("{}...", &trimmed[..100]) 
+                                    } else { 
+                                        trimmed.to_string() 
+                                    }
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        debug!("Error reading from {} binary: {}", source_name, e);
-                        break;
+                        // Handle UTF-8 errors gracefully - don't terminate, just warn and continue
+                        if e.kind() == std::io::ErrorKind::InvalidData {
+                            log::warn!("Invalid UTF-8 data from {} binary at line {}, skipping line", source_name, line_count + 1);
+                            // Try to read the next line 
+                            continue;
+                        } else {
+                            debug!("Error reading from {} binary: {}", source_name, e);
+                            break;
+                        }
                     }
                 }
             }
             
-            // Ensure child process is terminated
             debug!("Terminating {} binary process", source_name);
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            debug!("{} binary process terminated", source_name);
+            
+            // Terminate the child process
+            if let Err(e) = child.kill().await {
+                debug!("Failed to kill {} binary process: {}", source_name, e);
+            }
+            
+            // Wait for process to finish
+            match child.wait().await {
+                Ok(status) => {
+                    debug!("{} binary process terminated with status: {}", source_name, status);
+                }
+                Err(e) => {
+                    debug!("Error waiting for {} binary process: {}", source_name, e);
+                }
+            }
         };
-
-        Ok(Box::pin(event_stream))
+        
+        Ok(Box::pin(stream))
     }
 }
 

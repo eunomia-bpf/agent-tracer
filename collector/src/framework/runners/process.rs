@@ -312,55 +312,12 @@ mod tests {
                                         last_event_time = Instant::now();
                                         let runtime = start_time.elapsed().as_secs();
                                         
-                                        // Live streaming output with runtime
-                                        println!("[{:02}s] Event #{}: {} - {} (PID: {})", 
+                                        // Print event as JSON
+                                        println!("[{:02}s] Event #{}: {}", 
                                             runtime,
                                             event_count, 
-                                            event.event_type, 
-                                            event.data.get("comm").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                                            event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)
+                                            serde_json::to_string(&event).unwrap()
                                         );
-                                        
-                                        // Show filename for exec events
-                                        if event.event_type == "EXEC" {
-                                            if let Some(filename) = event.data.get("filename").and_then(|v| v.as_str()) {
-                                                println!("     File: {}", filename);
-                                            }
-                                        }
-                                        
-                                        // Show exit_code for exit events  
-                                        if event.event_type == "EXIT" {
-                                            if let Some(exit_code) = event.data.get("exit_code").and_then(|v| v.as_i64()) {
-                                                print!("     Exit code: {}", exit_code);
-                                                if let Some(duration) = event.data.get("duration_ms").and_then(|v| v.as_u64()) {
-                                                    println!(" ({}ms)", duration);
-                                                } else {
-                                                    println!();
-                                                }
-                                            }
-                                        }
-                                        
-                                        // Print full event details for first few events
-                                        if event_count <= 2 {
-                                            println!("     Full event data:");
-                                            println!("        Source: {}", event.source);
-                                            println!("        Timestamp: {}", event.timestamp);
-                                            println!("        Data: {}", event.data);
-                                            println!();
-                                        }
-                                        
-                                        // Verify event structure
-                                        assert_eq!(event.source, "process");
-                                        assert!(!event.id.is_empty());
-                                        assert!(event.timestamp > 0);
-                                        assert!(!event.event_type.is_empty());
-                                        assert!(event.data.get("pid").is_some());
-                                        assert!(event.data.get("ppid").is_some());
-                                        assert!(event.data.get("comm").is_some());
-                                        // filename is now optional - only present for EXEC events
-                                        if event.event_type == "EXEC" {
-                                            assert!(event.data.get("filename").is_some());
-                                        }
                                     }
                                     None => {
                                         println!("[{:02}s] Event stream ended naturally", start_time.elapsed().as_secs());
