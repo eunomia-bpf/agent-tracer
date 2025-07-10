@@ -20,7 +20,6 @@ struct event {
 
 struct command_filter {
 	char comm[TASK_COMM_LEN];
-	bool enabled;
 };
 
 struct pid_info {

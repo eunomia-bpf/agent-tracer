@@ -118,6 +118,25 @@ static void sig_handler(int sig)
 	exiting = true;
 }
 
+
+static int setup_command_filters(struct process_bpf *skel, char **command_list, int command_count)
+{
+	for (int i = 0; i < command_count && i < MAX_COMMAND_FILTERS; i++) {
+		struct command_filter filter = {
+		};
+		
+		strncpy(filter.comm, command_list[i], TASK_COMM_LEN - 1);
+		filter.comm[TASK_COMM_LEN - 1] = '\0';
+		
+		__u32 key = i;
+		skel->rodata->command_filters[i] = filter;
+		
+		printf("Configured filter %d: '%s'\n", i, filter.comm);
+	}
+	
+	return 0;
+}
+
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct event *e = data;
@@ -192,13 +211,6 @@ int main(int argc, char **argv)
 	skel->rodata->min_duration_ns = env.min_duration_ms * 1000000ULL;
 	skel->rodata->trace_all_processes = env.trace_all;
 
-	/* Load & verify BPF programs */
-	err = process_bpf__load(skel);
-	if (err) {
-		fprintf(stderr, "Failed to load and verify BPF skeleton\n");
-		goto cleanup;
-	}
-
 	/* Setup command filters if not tracing all */
 	if (!env.trace_all) {
 		err = setup_command_filters(skel, env.command_list, env.command_count);
@@ -206,6 +218,12 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Failed to setup command filters\n");
 			goto cleanup;
 		}
+	}
+	/* Load & verify BPF programs */
+	err = process_bpf__load(skel);
+	if (err) {
+		fprintf(stderr, "Failed to load and verify BPF skeleton\n");
+		goto cleanup;
 	}
 
 	/* Populate initial PIDs from existing processes */

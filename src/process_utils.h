@@ -79,30 +79,6 @@ static bool command_matches_filter(const char *comm, const char *filter)
 	return strstr(comm, filter) != NULL;
 }
 
-static int setup_command_filters(struct process_bpf *skel, char **command_list, int command_count)
-{
-	for (int i = 0; i < command_count && i < MAX_COMMAND_FILTERS; i++) {
-		struct command_filter filter = {
-			.enabled = true
-		};
-		
-		strncpy(filter.comm, command_list[i], TASK_COMM_LEN - 1);
-		filter.comm[TASK_COMM_LEN - 1] = '\0';
-		
-		__u32 key = i;
-		int err = bpf_map__update_elem(skel->maps.command_filters, 
-					      &key, sizeof(key), &filter, sizeof(filter), BPF_ANY);
-		if (err) {
-			fprintf(stderr, "Failed to set command filter %d: %d\n", i, err);
-			return err;
-		}
-		
-		printf("Configured filter %d: '%s'\n", i, filter.comm);
-	}
-	
-	return 0;
-}
-
 static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all)
 {
 	DIR *proc_dir;
@@ -160,8 +136,7 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 				.is_tracked = true
 			};
 			
-			int err = bpf_map__update_elem(skel->maps.tracked_pids, 
-						      &pid, sizeof(pid), &pid_info, sizeof(pid_info), BPF_ANY);
+			skel->rodata->tracked_pids[pid] = pid_info;
 			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
 				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
 			} else if (!trace_all) {

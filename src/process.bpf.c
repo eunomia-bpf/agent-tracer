@@ -20,13 +20,7 @@ struct {
 	__uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-/* Map to store command filters */
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, MAX_COMMAND_FILTERS);
-	__type(key, __u32);
-	__type(value, struct command_filter);
-} command_filters SEC(".maps");
+const struct command_filter command_filters[MAX_COMMAND_FILTERS] = {0};
 
 /* Map to store tracked PIDs */
 struct {
@@ -39,23 +33,42 @@ struct {
 const volatile unsigned long long min_duration_ns = 0;
 const volatile bool trace_all_processes = false;
 
-static __always_inline bool str_starts_with(const char *str, const char *prefix)
+/* Context structure for filter checking */
+struct filter_check_ctx {
+	const char *comm;
+	pid_t pid;
+	pid_t ppid;
+	bool found_match;
+};
+
+/* Callback function for filter checking loop */
+static int check_filter_callback(__u32 index, void *ctx)
 {
-	#pragma unroll
-	for (int i = 0; i < TASK_COMM_LEN - 1; i++) {
-		if (prefix[i] == '\0')
-			return true;
-		if (str[i] == '\0' || str[i] != prefix[i])
-			return false;
+	struct filter_check_ctx *filter_ctx = (struct filter_check_ctx *)ctx;
+	const struct command_filter *filter;
+	__u32 i = index;
+	
+	filter = &command_filters[i];
+
+	/* Check if command matches the filter string exactly */
+	if (bpf_strncmp(filter_ctx->comm, TASK_COMM_LEN, &filter->comm) == 0) {
+		/* Add this PID to tracked list */
+		struct pid_info new_pid_info = {
+			.pid = filter_ctx->pid,
+			.ppid = filter_ctx->ppid,
+			.is_tracked = true
+		};
+		bpf_map_update_elem(&tracked_pids, &filter_ctx->pid, &new_pid_info, BPF_ANY);
+		filter_ctx->found_match = true;
+		return 1; /* stop loop */
 	}
-	return true;
+	
+	return 0; /* continue loop */
 }
 
 static __always_inline bool should_trace_process(const char *comm, pid_t pid, pid_t ppid)
 {
-	struct command_filter *filter;
 	struct pid_info *parent_info;
-	__u32 i;
 
 	/* If tracing all processes, always return true */
 	if (trace_all_processes)
@@ -81,26 +94,16 @@ static __always_inline bool should_trace_process(const char *comm, pid_t pid, pi
 	}
 
 	/* Check if process command matches any configured filter */
-	#pragma unroll
-	for (i = 0; i < MAX_COMMAND_FILTERS; i++) {
-		filter = bpf_map_lookup_elem(&command_filters, &i);
-		if (!filter || !filter->enabled)
-			continue;
-
-		/* Check if command starts with the filter string */
-		if (str_starts_with(comm, filter->comm)) {
-			/* Add this PID to tracked list */
-			struct pid_info new_pid_info = {
-				.pid = pid,
-				.ppid = ppid,
-				.is_tracked = true
-			};
-			bpf_map_update_elem(&tracked_pids, &pid, &new_pid_info, BPF_ANY);
-			return true;
-		}
-	}
-
-	return false;
+	struct filter_check_ctx filter_ctx = {
+		.comm = comm,
+		.pid = pid,
+		.ppid = ppid,
+		.found_match = false
+	};
+	
+	bpf_loop(MAX_COMMAND_FILTERS, check_filter_callback, &filter_ctx, 0);
+	
+	return filter_ctx.found_match;
 }
 
 SEC("tp/sched/sched_process_exec")
