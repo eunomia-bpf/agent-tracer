@@ -15,13 +15,13 @@ typedef uint64_t __u64;
 #include "process.h"
 
 // Mock BPF skeleton structures for testing
-struct mock_map {
+struct bpf_map {
     int fd;
 };
 
 struct mock_maps {
-    struct mock_map command_filters;
-    struct mock_map tracked_pids;
+    struct bpf_map *command_filters;
+    struct bpf_map *tracked_pids;
 };
 
 struct process_bpf {
@@ -29,9 +29,10 @@ struct process_bpf {
 };
 
 // Mock BPF functions for testing
-int bpf_map__update_elem(struct mock_map *map, const void *key, size_t key_sz,
+int bpf_map__update_elem(const struct bpf_map *map, const void *key, size_t key_sz,
                         const void *value, size_t value_sz, __u64 flags) {
     // Mock implementation that always succeeds
+    (void)map; (void)key; (void)key_sz; (void)value; (void)value_sz; (void)flags;
     return 0;
 }
 
@@ -126,7 +127,13 @@ void test_command_matches_filter() {
 void test_setup_command_filters() {
     printf("\n" BLUE "Testing setup_command_filters function:" RESET "\n");
     
-    struct process_bpf mock_skel = {0};
+    struct bpf_map mock_cmd_map = {0};
+    struct process_bpf mock_skel = {
+        .maps = {
+            .command_filters = &mock_cmd_map,
+            .tracked_pids = &mock_cmd_map
+        }
+    };
     char *command_list[] = {"bash", "python", "node"};
     int command_count = 3;
     
@@ -149,7 +156,13 @@ void test_setup_command_filters() {
 void test_populate_initial_pids() {
     printf("\n" BLUE "Testing populate_initial_pids function:" RESET "\n");
     
-    struct process_bpf mock_skel = {0};
+    struct bpf_map mock_pid_map = {0};
+    struct process_bpf mock_skel = {
+        .maps = {
+            .command_filters = &mock_pid_map,
+            .tracked_pids = &mock_pid_map
+        }
+    };
     char *command_list[] = {"bash"};
     int command_count = 1;
     

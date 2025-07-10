@@ -7,6 +7,15 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+// Forward declarations for BPF types when not in test mode
+#ifndef BPF_ANY
+#include <bpf/libbpf.h>
+typedef uint32_t __u32;
+#endif
+
 #include "process.h"
 
 static int read_proc_comm(pid_t pid, char *comm, size_t size)
