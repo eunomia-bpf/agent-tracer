@@ -1,9 +1,11 @@
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
+
+mod process;
+mod sslsniff;
 
 // Embed the binaries at compile time
 const PROCESS_BINARY: &[u8] = include_bytes!("../../src/process");
@@ -52,34 +54,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Small delay to ensure files are fully written
     sleep(Duration::from_millis(100)).await;
     
+    // Create collectors
+    let process_collector = process::ProcessCollector::new(&process_path);
+    let sslsniff_collector = sslsniff::SslSniffCollector::new(&sslsniff_path);
+    
     // Start the process binary in background
     let process_handle = tokio::spawn(async move {
         println!("Starting process binary...");
-        let output = Command::new(&process_path)
-            .output()
-            .expect("Failed to execute process binary");
-        
-        println!("Process binary output:");
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        if !output.stderr.is_empty() {
-            println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        match process_collector.collect_events().await {
+            Ok(events) => {
+                println!("Process events collected: {}", events.len());
+                for event in events {
+                    println!("Process event: {:?}", event);
+                }
+            }
+            Err(e) => {
+                println!("Error collecting process events: {}", e);
+            }
         }
-        println!("status: {}", output.status);
     });
     
     // Start the sslsniff binary in background
     let sslsniff_handle = tokio::spawn(async move {
         println!("Starting sslsniff binary...");
-        let output = Command::new(&sslsniff_path)
-            .output()
-            .expect("Failed to execute sslsniff binary");
-        
-        println!("Sslsniff binary output:");
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        if !output.stderr.is_empty() {
-            println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        match sslsniff_collector.collect_events().await {
+            Ok(events) => {
+                println!("SSL events collected: {}", events.len());
+                for event in events {
+                    println!("SSL event: {:?}", event);
+                }
+            }
+            Err(e) => {
+                println!("Error collecting SSL events: {}", e);
+            }
         }
-        println!("status: {}", output.status);
     });
     
     // Wait for both processes to complete

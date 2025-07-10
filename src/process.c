@@ -130,8 +130,6 @@ static int setup_command_filters(struct process_bpf *skel, char **command_list, 
 		filter.comm[TASK_COMM_LEN - 1] = '\0';
 		
 		skel->rodata->command_filters[i] = filter;
-		
-		printf("Configured filter %d: '%s'\n", i, filter.comm);
 	}
 	
 	return 0;
@@ -150,12 +148,6 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 	if (!proc_dir) {
 		fprintf(stderr, "Failed to open /proc directory\n");
 		return -1;
-	}
-	
-	if (trace_all) {
-		printf("Tracing all processes (no filter specified)\n");
-	} else {
-		printf("Scanning existing processes for matching commands...\n");
 	}
 	
 	while ((entry = readdir(proc_dir)) != NULL) {
@@ -200,9 +192,6 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 			                               &pid_info, sizeof(pid_info), BPF_ANY);
 			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
 				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
-			} else if (!trace_all) {
-				printf("  Found matching process: PID=%d, PPID=%d, COMM=%s\n", 
-					pid, ppid, comm);
 			}
 			if (!err)
 				tracked_count++;
@@ -210,8 +199,7 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 	}
 	
 	closedir(proc_dir);
-	printf("Initially tracking %d processes\n", tracked_count);
-	return 0;
+	return tracked_count;
 }
 
 static int handle_event(void *ctx, void *data, size_t data_sz)
@@ -226,6 +214,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
 	printf("{");
+	printf("\"type\":\"event\",");
 	printf("\"timestamp\":\"%s\",", ts);
 	printf("\"event\":\"%s\",", e->exit_event ? "EXIT" : "EXEC");
 	printf("\"comm\":\"%s\",", e->comm);
@@ -258,17 +247,6 @@ int main(int argc, char **argv)
 
 	/* Determine if we should trace all processes (default if no commands specified) */
 	env.trace_all = (env.command_count == 0);
-
-	printf("Process tracer starting...\n");
-	if (env.trace_all) {
-		printf("Configured to trace ALL processes (no filter specified)\n");
-	} else {
-		printf("Configured to trace processes containing: ");
-		for (int i = 0; i < env.command_count; i++) {
-			printf("'%s'%s", env.command_list[i], 
-			       (i < env.command_count - 1) ? ", " : "\n");
-		}
-	}
 
 	/* Set up libbpf errors and debug info callback */
 	libbpf_set_print(libbpf_print_fn);
@@ -304,11 +282,20 @@ int main(int argc, char **argv)
 	}
 
 	/* Populate initial PIDs from existing processes */
-	err = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all);
-	if (err) {
+	int tracked_count = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all);
+	if (tracked_count < 0) {
 		fprintf(stderr, "Failed to populate initial PIDs\n");
 		goto cleanup;
 	}
+	
+	/* Output configuration as JSON */
+	printf("{\"type\":\"config\",\"trace_all\":%s,\"min_duration_ms\":%ld,\"commands\":[", 
+	       env.trace_all ? "true" : "false", env.min_duration_ms);
+	for (int i = 0; i < env.command_count; i++) {
+		printf("\"%s\"%s", env.command_list[i], 
+		       (i < env.command_count - 1) ? "," : "");
+	}
+	printf("],\"initial_tracked_pids\":%d}\n", tracked_count);
 
 	/* Attach tracepoints */
 	err = process_bpf__attach(skel);
@@ -325,7 +312,7 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	printf("Tracing started. Press Ctrl+C to stop.\n");
+
 
 	/* Process events */
 	while (!exiting) {
