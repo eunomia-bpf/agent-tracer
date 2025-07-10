@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
+use log::debug;
 
 /// Trait for converting from specific event data types to framework Events
 pub trait IntoFrameworkEvent {
@@ -26,7 +27,7 @@ impl BinaryExecutor {
     where
         T: DeserializeOwned + IntoFrameworkEvent + Send + 'static,
     {
-        println!("🚀 Starting {} binary: {}", source, self.binary_path);
+        debug!("Starting {} binary: {}", source, self.binary_path);
         
         // Spawn the process with piped stdout
         let mut child = TokioCommand::new(&self.binary_path)
@@ -38,7 +39,7 @@ impl BinaryExecutor {
         let stdout = child.stdout.take()
             .ok_or_else(|| format!("Failed to capture stdout for {} binary", source))?;
 
-        println!("📡 {} binary started with PID: {:?}", source, child.id());
+        debug!("{} binary started with PID: {:?}", source, child.id());
         
         let source_name = source.to_string();
         
@@ -48,13 +49,13 @@ impl BinaryExecutor {
             let mut line = String::new();
             let mut line_count = 0;
             
-            println!("📖 Reading from {} binary stdout...", source_name);
+            debug!("Reading from {} binary stdout", source_name);
             
             loop {
                 line.clear();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        println!("📡 {} binary stdout closed (EOF)", source_name);
+                        debug!("{} binary stdout closed (EOF)", source_name);
                         break;
                     }
                     Ok(_) => {
@@ -62,7 +63,7 @@ impl BinaryExecutor {
                         let trimmed = line.trim();
                         
                         if !trimmed.is_empty() {
-                            println!("📝 Line {}: {}", line_count, 
+                            debug!("Line {}: {}", line_count, 
                                 if trimmed.len() > 100 { 
                                     format!("{}...", &trimmed[..100]) 
                                 } else { 
@@ -75,32 +76,32 @@ impl BinaryExecutor {
                                 match serde_json::from_str::<T>(trimmed) {
                                     Ok(event_data) => {
                                         let event = event_data.into_framework_event(&source_name);
-                                        println!("✅ Parsed event: {} - {}", event.event_type, event.source);
+                                        debug!("Parsed event: {} - {}", event.event_type, event.source);
                                         yield event;
                                     }
                                     Err(e) => {
-                                        println!("⚠️  Failed to parse JSON on line {}: {} - Raw: {}", 
+                                        debug!("Failed to parse JSON on line {}: {} - Raw: {}", 
                                             line_count, e, trimmed);
                                     }
                                 }
                             } else {
-                                println!("ℹ️  Skipping non-event line {}: {}", line_count, 
+                                debug!("Skipping non-event line {}: {}", line_count, 
                                     if trimmed.contains("\"type\":\"config\"") { "config" } else { "unknown" });
                             }
                         }
                     }
                     Err(e) => {
-                        println!("❌ Error reading from {} binary: {}", source_name, e);
+                        debug!("Error reading from {} binary: {}", source_name, e);
                         break;
                     }
                 }
             }
             
             // Ensure child process is terminated
-            println!("🔪 Terminating {} binary process", source_name);
+            debug!("Terminating {} binary process", source_name);
             let _ = child.kill().await;
             let _ = child.wait().await;
-            println!("✅ {} binary process terminated", source_name);
+            debug!("{} binary process terminated", source_name);
         };
 
         Ok(Box::pin(event_stream))

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize, Deserializer};
 use std::path::Path;
 use uuid::Uuid;
+use log::debug;
 
 fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
@@ -52,35 +53,48 @@ where
     deserializer.deserialize_any(TimestampVisitor)
 }
 
-/// SSL/TLS event data structure from sslsniff binary (matches original SslEvent)
+/// SSL event data structure from ssl binary  
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SslEventData {
     pub pid: u32,
     pub comm: String,
-    pub fd: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
     #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u64,
     #[serde(rename = "event")]
     pub event_type: String,
-    pub data: String,
-    pub data_len: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fd: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub len: Option<u64>,
 }
 
 impl IntoFrameworkEvent for SslEventData {
     fn into_framework_event(self, source: &str) -> Event {
+        let mut data = serde_json::json!({
+            "pid": self.pid,
+            "comm": self.comm,
+            "event_type": self.event_type
+        });
+        
+        // Add optional fields if they exist
+        if let Some(fd) = self.fd {
+            data["fd"] = serde_json::Value::Number(fd.into());
+        }
+        if let Some(ssl_data) = self.data {
+            data["data"] = serde_json::Value::String(ssl_data);
+        }
+        if let Some(len) = self.len {
+            data["data_len"] = serde_json::Value::Number(len.into());
+        }
+        
         Event::new_with_id_and_timestamp(
             Uuid::new_v4().to_string(),
             self.timestamp,
             source.to_string(),
             self.event_type.clone(),
-            serde_json::json!({
-                "pid": self.pid,
-                "comm": self.comm,
-                "fd": self.fd,
-                "data": self.data,
-                "data_len": self.data_len,
-                "event_type": self.event_type
-            }),
+            data,
         )
     }
 }
@@ -181,11 +195,11 @@ mod tests {
         let ssl_data = SslEventData {
             pid: 1234,
             comm: "test".to_string(),
-            fd: 3,
+            fd: Some(3),
             timestamp: 1234567890,
             event_type: "ssl_read".to_string(),
-            data: "test data".to_string(),
-            data_len: 9,
+            data: Some("test data".to_string()),
+            len: Some(9),
         };
 
         let json = serde_json::to_string(&ssl_data).unwrap();
@@ -194,6 +208,9 @@ mod tests {
         assert_eq!(ssl_data.pid, deserialized.pid);
         assert_eq!(ssl_data.comm, deserialized.comm);
         assert_eq!(ssl_data.event_type, deserialized.event_type);
+        assert_eq!(ssl_data.fd, deserialized.fd);
+        assert_eq!(ssl_data.data, deserialized.data);
+        assert_eq!(ssl_data.len, deserialized.len);
     }
 
     #[test]
@@ -201,11 +218,11 @@ mod tests {
         let ssl_data = SslEventData {
             pid: 1234,
             comm: "curl".to_string(),
-            fd: 3,
+            fd: Some(3),
             timestamp: 1234567890,
             event_type: "ssl_read".to_string(),
-            data: "test data".to_string(),
-            data_len: 9,
+            data: Some("test data".to_string()),
+            len: Some(9),
         };
 
         let event = ssl_data.into_framework_event("ssl");
@@ -215,6 +232,8 @@ mod tests {
         assert!(event.data.get("pid").is_some());
         assert!(event.data.get("comm").is_some());
         assert!(event.data.get("fd").is_some());
+        assert!(event.data.get("data").is_some());
+        assert!(event.data.get("data_len").is_some());
     }
 
     /// Test that actually runs the real SSL binary

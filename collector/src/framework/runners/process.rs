@@ -58,27 +58,44 @@ pub struct ProcessEventData {
     pub pid: u32,
     pub ppid: u32,
     pub comm: String,
-    pub filename: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
     #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u64,
     #[serde(rename = "event")]
     pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 impl IntoFrameworkEvent for ProcessEventData {
     fn into_framework_event(self, source: &str) -> Event {
+        let mut data = serde_json::json!({
+            "pid": self.pid,
+            "ppid": self.ppid,
+            "comm": self.comm,
+            "event_type": self.event_type
+        });
+        
+        // Add optional fields if they exist
+        if let Some(filename) = self.filename {
+            data["filename"] = serde_json::Value::String(filename);
+        }
+        if let Some(exit_code) = self.exit_code {
+            data["exit_code"] = serde_json::Value::Number(exit_code.into());
+        }
+        if let Some(duration_ms) = self.duration_ms {
+            data["duration_ms"] = serde_json::Value::Number(duration_ms.into());
+        }
+        
         Event::new_with_id_and_timestamp(
             Uuid::new_v4().to_string(),
             self.timestamp,
             source.to_string(),
             self.event_type.clone(),
-            serde_json::json!({
-                "pid": self.pid,
-                "ppid": self.ppid,
-                "comm": self.comm,
-                "filename": self.filename,
-                "event_type": self.event_type
-            }),
+            data,
         )
     }
 }
@@ -188,9 +205,11 @@ mod tests {
             pid: 1234,
             ppid: 5678,
             comm: "test".to_string(),
-            filename: "/test/path".to_string(),
+            filename: Some("/test/path".to_string()),
             timestamp: 1234567890,
             event_type: "exec".to_string(),
+            exit_code: None,
+            duration_ms: None,
         };
 
         let json = serde_json::to_string(&process_data).unwrap();
@@ -209,9 +228,11 @@ mod tests {
             pid: 1234,
             ppid: 5678,
             comm: "test".to_string(),
-            filename: "/test/path".to_string(),
+            filename: Some("/test/path".to_string()),
             timestamp: 1234567890,
             event_type: "exec".to_string(),
+            exit_code: None,
+            duration_ms: None,
         };
 
         let event = process_data.into_framework_event("process");
@@ -242,19 +263,25 @@ mod tests {
         use std::time::{Duration, Instant};
         use tokio::time::{timeout, interval};
         
+        // Initialize debug logging for the test
+        let _ = env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+        
         let binary_path = "../src/process";
         
         // Check if binary exists before attempting to run
         if !Path::new(binary_path).exists() {
-            eprintln!("⚠️  Process binary not found at {}", binary_path);
+            eprintln!("Process binary not found at {}", binary_path);
             eprintln!("   Build the binary first: cd ../src && make process");
             return;
         }
 
         let start_time = Instant::now();
-        println!("🧪 Testing ProcessRunner with real binary at {}", binary_path);
-        println!("   ⏱️  Runtime: 30 seconds with live streaming output");
-        println!("   🔄 Will terminate the process automatically after timeout");
+        println!("Testing ProcessRunner with real binary at {}", binary_path);
+        println!("   Runtime: 30 seconds with live streaming output");
+        println!("   Will terminate the process automatically after timeout");
         println!("{}", "=".repeat(60));
         
         // Create runner with real binary
@@ -266,8 +293,8 @@ mod tests {
         // Run the binary and collect events for 30 seconds
         match runner.run().await {
             Ok(mut stream) => {
-                println!("✅ ProcessRunner started successfully! ({}s)", start_time.elapsed().as_secs());
-                println!("📡 Streaming process events live for 30 seconds...");
+                println!("ProcessRunner started successfully! ({}s)", start_time.elapsed().as_secs());
+                println!("Streaming process events live for 30 seconds...");
                 println!();
                 
                 let mut event_count = 0;
@@ -286,7 +313,7 @@ mod tests {
                                         let runtime = start_time.elapsed().as_secs();
                                         
                                         // Live streaming output with runtime
-                                        println!("[{:02}s] 🔄 Event #{}: {} - {} (PID: {})", 
+                                        println!("[{:02}s] Event #{}: {} - {} (PID: {})", 
                                             runtime,
                                             event_count, 
                                             event.event_type, 
@@ -295,15 +322,27 @@ mod tests {
                                         );
                                         
                                         // Show filename for exec events
-                                        if event.event_type == "exec" {
+                                        if event.event_type == "EXEC" {
                                             if let Some(filename) = event.data.get("filename").and_then(|v| v.as_str()) {
-                                                println!("     📁 File: {}", filename);
+                                                println!("     File: {}", filename);
+                                            }
+                                        }
+                                        
+                                        // Show exit_code for exit events  
+                                        if event.event_type == "EXIT" {
+                                            if let Some(exit_code) = event.data.get("exit_code").and_then(|v| v.as_i64()) {
+                                                print!("     Exit code: {}", exit_code);
+                                                if let Some(duration) = event.data.get("duration_ms").and_then(|v| v.as_u64()) {
+                                                    println!(" ({}ms)", duration);
+                                                } else {
+                                                    println!();
+                                                }
                                             }
                                         }
                                         
                                         // Print full event details for first few events
                                         if event_count <= 2 {
-                                            println!("     🔍 Full event data:");
+                                            println!("     Full event data:");
                                             println!("        Source: {}", event.source);
                                             println!("        Timestamp: {}", event.timestamp);
                                             println!("        Data: {}", event.data);
@@ -318,10 +357,13 @@ mod tests {
                                         assert!(event.data.get("pid").is_some());
                                         assert!(event.data.get("ppid").is_some());
                                         assert!(event.data.get("comm").is_some());
-                                        assert!(event.data.get("filename").is_some());
+                                        // filename is now optional - only present for EXEC events
+                                        if event.event_type == "EXEC" {
+                                            assert!(event.data.get("filename").is_some());
+                                        }
                                     }
                                     None => {
-                                        println!("[{:02}s] 📡 Event stream ended naturally", start_time.elapsed().as_secs());
+                                        println!("[{:02}s] Event stream ended naturally", start_time.elapsed().as_secs());
                                         break;
                                     }
                                 }
@@ -329,7 +371,7 @@ mod tests {
                             _ = status_interval.tick() => {
                                 let runtime = start_time.elapsed().as_secs();
                                 let time_since_last = last_event_time.elapsed().as_secs();
-                                println!("[{:02}s] ⏱️  Status: {} events collected, last event {}s ago", 
+                                println!("[{:02}s] Status: {} events collected, last event {}s ago", 
                                     runtime, event_count, time_since_last);
                             }
                         }
@@ -340,30 +382,30 @@ mod tests {
                 println!();
                 
                 match result {
-                    Ok(_) => println!("📡 Event stream completed naturally after {:.1}s", total_runtime.as_secs_f32()),
+                    Ok(_) => println!("Event stream completed naturally after {:.1}s", total_runtime.as_secs_f32()),
                     Err(_) => {
-                        println!("⏰ 30-second timeout reached - terminating process");
-                        println!("🔪 Process killed automatically");
+                        println!("30-second timeout reached - terminating process");
+                        println!("Process killed automatically");
                     }
                 }
                 
                 println!("{}", "=".repeat(60));
-                println!("✅ ProcessRunner test completed!");
-                println!("   📊 Total events: {}", event_count);
-                println!("   ⏱️  Total runtime: {:.2}s", total_runtime.as_secs_f32());
-                println!("   📈 Event rate: {:.1} events/sec", 
+                println!("ProcessRunner test completed!");
+                println!("   Total events: {}", event_count);
+                println!("   Total runtime: {:.2}s", total_runtime.as_secs_f32());
+                println!("   Event rate: {:.1} events/sec", 
                     event_count as f32 / total_runtime.as_secs_f32());
                 
                 if event_count == 0 {
                     println!();
-                    println!("⚠️  No events captured during test period!");
-                    println!("   💡 Try running commands in another terminal:");
-                    println!("   💡 ls, ps, cat /proc/version, etc.");
+                    println!("No events captured during test period!");
+                    println!("   Try running commands in another terminal:");
+                    println!("   ls, ps, cat /proc/version, etc.");
                 }
             }
             Err(e) => {
                 let runtime = start_time.elapsed();
-                eprintln!("❌ ProcessRunner failed after {:.2}s: {}", runtime.as_secs_f32(), e);
+                eprintln!("ProcessRunner failed after {:.2}s: {}", runtime.as_secs_f32(), e);
                 eprintln!("   Possible causes:");
                 eprintln!("   - Insufficient privileges (try: sudo cargo test ...)");
                 eprintln!("   - Binary compilation failed");
