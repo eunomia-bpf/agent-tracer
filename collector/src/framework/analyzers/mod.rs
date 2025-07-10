@@ -11,6 +11,7 @@ pub trait Analyzer: Send + Sync {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError>;
     
     /// Get the name of this analyzer
+    #[allow(dead_code)]
     fn name(&self) -> &str;
 }
 

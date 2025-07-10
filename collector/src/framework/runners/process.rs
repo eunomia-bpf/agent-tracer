@@ -127,6 +127,7 @@ impl ProcessRunner {
     }
 
     /// Set the PID to monitor
+    #[allow(dead_code)]
     pub fn pid(mut self, pid: u32) -> Self {
         self.config.pid = Some(pid);
         self
@@ -145,6 +146,7 @@ impl ProcessRunner {
     }
 
     /// Set the memory threshold for filtering
+    #[allow(dead_code)]
     pub fn memory_threshold(mut self, threshold: u64) -> Self {
         self.config.memory_threshold = Some(threshold);
         self

@@ -21,9 +21,11 @@ pub trait Runner: Send + Sync {
         Self: Sized;
     
     /// Get the name of this runner
+    #[allow(dead_code)]
     fn name(&self) -> &str;
     
     /// Get a unique identifier for this runner instance
+    #[allow(dead_code)]
     fn id(&self) -> String;
 }
 
@@ -32,6 +34,7 @@ pub trait Runner: Send + Sync {
 pub struct SslConfig {
     pub port: Option<u16>,
     pub interface: Option<String>,
+    #[allow(dead_code)]
     pub tls_version: Option<String>,
 }
 
@@ -48,9 +51,11 @@ impl Default for SslConfig {
 /// Configuration for process monitoring
 #[derive(Debug, Clone)]
 pub struct ProcessConfig {
+    #[allow(dead_code)]
     pub pid: Option<u32>,
     pub name: Option<String>,
     pub cpu_threshold: Option<f32>,
+    #[allow(dead_code)]
     pub memory_threshold: Option<u64>,
 }
 

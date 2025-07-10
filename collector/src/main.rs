@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Demo function showing the new framework in action
 async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
-    println!("🚀 Framework Demo: SSL Runner with Output Analyzer");
+    println!("Framework Demo: SSL Runner with Output Analyzer");
     println!("{}", "=".repeat(60));
     
     // Create and configure an SSL runner with output analyzer
@@ -97,7 +97,7 @@ async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerErro
         .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, true, false))); // timestamps off for demo
     
     // Run the SSL collection with streaming output
-    println!("📡 SSL Runner starting (streaming events in real-time):");
+    println!("SSL Runner starting (streaming events in real-time):");
     let mut ssl_stream = ssl_runner.run().await?;
     let mut ssl_count = 0;
     while let Some(_event) = ssl_stream.next().await {
@@ -108,7 +108,7 @@ async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerErro
     }
     
     println!();
-    println!("🔄 Framework Demo: Process Runner with Output Analyzer");
+    println!("Framework Demo: Process Runner with Output Analyzer");
     println!("{}", "=".repeat(60));
     
     // Create and configure a process runner with output analyzer
@@ -119,7 +119,7 @@ async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerErro
         .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, true, false))); // timestamps off for demo
     
     // Run the process collection with streaming output
-    println!("🖥️  Process Runner starting (streaming events in real-time):");
+    println!("Process Runner starting (streaming events in real-time):");
     let mut process_stream = process_runner.run().await?;
     let mut process_count = 0;
     while let Some(_event) = process_stream.next().await {
@@ -130,7 +130,7 @@ async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerErro
     }
     
     println!();
-    println!("✅ Framework Demo completed successfully!");
+    println!("Framework Demo completed successfully!");
     println!("   - SslRunner: {} events", ssl_count);
     println!("   - ProcessRunner: {} events", process_count);
     println!("   - Total events: {}", ssl_count + process_count);
@@ -140,14 +140,14 @@ async fn run_framework_demo(binary_paths: &BinaryPaths) -> Result<(), RunnerErro
 
 /// Test SSL runner with real binary
 async fn run_ssl_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
-    println!("�� Testing SSL Runner");
+    println!("Testing SSL Runner");
     println!("{}", "=".repeat(60));
     
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_paths.get_sslsniff_path())
         .with_id("ssl".to_string())
         .add_analyzer(Box::new(OutputAnalyzer::new_simple()));
     
-    println!("📡 Starting SSL event stream (press Ctrl+C to stop):");
+    println!("Starting SSL event stream (press Ctrl+C to stop):");
     let mut stream = ssl_runner.run().await?;
     
     // Process events as they come in - this provides real-time output
@@ -156,24 +156,24 @@ async fn run_ssl_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
         event_count += 1;
         // OutputAnalyzer already prints the events, we just count them
         if event_count % 10 == 0 {
-            eprintln!("📊 Processed {} events so far...", event_count);
+            eprintln!("Processed {} events so far...", event_count);
         }
     }
     
-    println!("✅ SSL Runner completed with {} events", event_count);
+    println!("SSL Runner completed with {} events", event_count);
     Ok(())
 }
 
 /// Test process runner with real binary
 async fn run_process_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
-    println!("🔄 Testing Process Runner");
+    println!("Testing Process Runner");
     println!("{}", "=".repeat(60));
     
     let mut process_runner = ProcessRunner::from_binary_extractor(binary_paths.get_process_path())
         .with_id("process".to_string())
         .add_analyzer(Box::new(OutputAnalyzer::new_simple()));
     
-    println!("🖥️  Starting process event stream (press Ctrl+C to stop):");
+    println!("Starting process event stream (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;
     
     // Process events as they come in - this provides real-time output
@@ -182,17 +182,17 @@ async fn run_process_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError>
         event_count += 1;
         // OutputAnalyzer already prints the events, we just count them
         if event_count % 10 == 0 {
-            eprintln!("📊 Processed {} events so far...", event_count);
+            eprintln!("Processed {} events so far...", event_count);
         }
     }
     
-    println!("✅ Process Runner completed with {} events", event_count);
+    println!("Process Runner completed with {} events", event_count);
     Ok(())
 }
 
 /// Test both runners with real binaries
 async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Testing Both Runners");
+    println!("Testing Both Runners");
     println!("{}", "=".repeat(60));
     
     let ssl_handle = {
@@ -205,18 +205,18 @@ async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::er
             match ssl_runner.run().await {
                 Ok(mut stream) => {
                     let mut count = 0;
-                    println!("📡 SSL Runner started, processing events...");
+                    println!("SSL Runner started, processing events...");
                     while let Some(_event) = stream.next().await {
                         count += 1;
                         if count % 5 == 0 {
-                            eprintln!("📊 SSL: {} events processed", count);
+                            eprintln!("SSL: {} events processed", count);
                         }
                     }
-                    println!("✅ SSL Runner completed with {} events", count);
+                    println!("SSL Runner completed with {} events", count);
                     count
                 }
                 Err(e) => {
-                    println!("❌ SSL Runner error: {}", e);
+                    println!("SSL Runner error: {}", e);
                     0
                 }
             }
@@ -233,18 +233,18 @@ async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::er
             match process_runner.run().await {
                 Ok(mut stream) => {
                     let mut count = 0;
-                    println!("🖥️  Process Runner started, processing events...");
+                    println!("Process Runner started, processing events...");
                     while let Some(_event) = stream.next().await {
                         count += 1;
                         if count % 5 == 0 {
-                            eprintln!("📊 Process: {} events processed", count);
+                            eprintln!("Process: {} events processed", count);
                         }
                     }
-                    println!("✅ Process Runner completed with {} events", count);
+                    println!("Process Runner completed with {} events", count);
                     count
                 }
                 Err(e) => {
-                    println!("❌ Process Runner error: {}", e);
+                    println!("Process Runner error: {}", e);
                     0
                 }
             }
@@ -254,7 +254,7 @@ async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::er
     let (ssl_count, process_count) = tokio::join!(ssl_handle, process_handle);
     
     println!();
-    println!("✅ Both Runners completed!");
+    println!("Both Runners completed!");
     println!("   - SSL events: {}", ssl_count.unwrap_or(0));
     println!("   - Process events: {}", process_count.unwrap_or(0));
     
@@ -263,11 +263,11 @@ async fn run_both_real(binary_paths: &BinaryPaths) -> Result<(), Box<dyn std::er
 
 /// Test framework with raw analyzer output (real binaries)
 async fn run_test_raw_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError> {
-    println!("🧪 Testing Framework with Raw Analyzer (Real Binaries)");
+    println!("Testing Framework with Raw Analyzer (Real Binaries)");
     println!("{}", "=".repeat(60));
     
     // Test SSL with raw output (printing to stdout)
-    println!("📡 SSL Raw Output:");
+    println!("SSL Raw Output:");
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_paths.get_sslsniff_path())
         .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
     
@@ -275,7 +275,7 @@ async fn run_test_raw_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError
     let ssl_events: Vec<_> = ssl_stream.collect().await;
     
     println!();
-    println!("🖥️  Process Raw Output:");
+    println!("Process Raw Output:");
     let mut process_runner = ProcessRunner::from_binary_extractor(binary_paths.get_process_path())
         .add_analyzer(Box::new(RawAnalyzer::new())); // This will print to stdout
     
@@ -283,7 +283,7 @@ async fn run_test_raw_real(binary_paths: &BinaryPaths) -> Result<(), RunnerError
     let process_events: Vec<_> = process_stream.collect().await;
     
     println!();
-    println!("✅ Raw output test completed!");
+    println!("Raw output test completed!");
     println!("   - SSL events: {}", ssl_events.len());
     println!("   - Process events: {}", process_events.len());
     

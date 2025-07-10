@@ -19,6 +19,7 @@ impl RawAnalyzer {
     }
 
     /// Create a new RawAnalyzer with custom settings
+    #[allow(dead_code)]
     pub fn new_with_options(print_to_stdout: bool) -> Self {
         Self {
             name: "raw".to_string(),

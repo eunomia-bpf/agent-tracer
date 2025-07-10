@@ -95,6 +95,7 @@ impl SslRunner {
     }
 
     /// Set the TLS version filter
+    #[allow(dead_code)]
     pub fn tls_version(mut self, version: String) -> Self {
         self.config.tls_version = Some(version);
         self

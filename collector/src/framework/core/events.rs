@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Core event structure for the observability framework
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -14,10 +15,14 @@ pub struct Event {
 
 impl Event {
     /// Create a new event with auto-generated ID and current timestamp
+    #[allow(dead_code)]
     pub fn new(source: String, event_type: String, data: serde_json::Value) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            timestamp: Utc::now().timestamp_millis() as u64,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
             source,
             event_type,
             data,
@@ -52,12 +57,14 @@ impl Event {
         serde_json::to_string(self)
     }
 
-    /// Convert to pretty JSON string
+    /// Serialize this event to pretty-printed JSON
+    #[allow(dead_code)]
     pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Create from JSON string
+    /// Deserialize an event from JSON string
+    #[allow(dead_code)]
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }

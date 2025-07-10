@@ -110,16 +110,18 @@ impl Analyzer for OutputAnalyzer {
                 }
             };
             
-            // Print the formatted output
+            // Print the formatted output immediately
             if output_parts.is_empty() {
                 println!("{}", content);
             } else {
                 println!("{} {}", output_parts.join(" "), content);
             }
             
-            // Flush stdout to ensure immediate output
+            // Flush stdout immediately to ensure real-time output
             use std::io::{self, Write};
-            let _ = io::stdout().flush();
+            if let Err(e) = io::stdout().flush() {
+                eprintln!("Warning: Failed to flush stdout: {}", e);
+            }
             
             // Pass the event through unchanged
             event
