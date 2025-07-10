@@ -79,13 +79,14 @@ static bool command_matches_filter(const char *comm, const char *filter)
 	return strstr(comm, filter) != NULL;
 }
 
-static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all)
+/* Count and print processes that match the given command filters */
+static int count_matching_processes(char **command_list, int command_count, bool trace_all)
 {
 	DIR *proc_dir;
 	struct dirent *entry;
 	pid_t pid, ppid;
 	char comm[TASK_COMM_LEN];
-	int tracked_count = 0;
+	int matching_count = 0;
 	
 	proc_dir = opendir("/proc");
 	if (!proc_dir) {
@@ -119,7 +120,8 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 		bool should_track = trace_all;
 		
 		/* If not tracing all, check if this process matches any configured filter */
-		if (!trace_all) {
+		if (!trace_all && command_list && command_count > 0) {
+			should_track = false;
 			for (int i = 0; i < command_count; i++) {
 				if (command_matches_filter(comm, command_list[i])) {
 					should_track = true;
@@ -129,28 +131,19 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 		}
 		
 		if (should_track) {
-			/* Add to tracked PIDs */
-			struct pid_info pid_info = {
-				.pid = pid,
-				.ppid = ppid,
-				.is_tracked = true
-			};
-			
-			skel->rodata->tracked_pids[pid] = pid_info;
-			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
-				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
-			} else if (!trace_all) {
+			if (!trace_all) {
 				printf("  Found matching process: PID=%d, PPID=%d, COMM=%s\n", 
 					pid, ppid, comm);
 			}
-			if (!err)
-				tracked_count++;
+			matching_count++;
 		}
 	}
 	
 	closedir(proc_dir);
-	printf("Initially tracking %d processes\n", tracked_count);
-	return 0;
+	printf("Initially tracking %d processes\n", matching_count);
+	return matching_count;
 }
+
+
 
 #endif /* __PROCESS_UTILS_H */ 

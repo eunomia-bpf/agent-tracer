@@ -6,6 +6,7 @@
 #include <time.h>
 #include <sys/resource.h>
 #include <bpf/libbpf.h>
+#include <dirent.h>
 #include "process.h"
 #include "process.skel.h"
 #include "process_utils.h"
@@ -128,12 +129,88 @@ static int setup_command_filters(struct process_bpf *skel, char **command_list, 
 		strncpy(filter.comm, command_list[i], TASK_COMM_LEN - 1);
 		filter.comm[TASK_COMM_LEN - 1] = '\0';
 		
-		__u32 key = i;
 		skel->rodata->command_filters[i] = filter;
 		
 		printf("Configured filter %d: '%s'\n", i, filter.comm);
 	}
 	
+	return 0;
+}
+
+/* Populate initial PIDs in the eBPF map from existing processes */
+static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all)
+{
+	DIR *proc_dir;
+	struct dirent *entry;
+	pid_t pid, ppid;
+	char comm[TASK_COMM_LEN];
+	int tracked_count = 0;
+	
+	proc_dir = opendir("/proc");
+	if (!proc_dir) {
+		fprintf(stderr, "Failed to open /proc directory\n");
+		return -1;
+	}
+	
+	if (trace_all) {
+		printf("Tracing all processes (no filter specified)\n");
+	} else {
+		printf("Scanning existing processes for matching commands...\n");
+	}
+	
+	while ((entry = readdir(proc_dir)) != NULL) {
+		/* Skip non-numeric entries */
+		if (strspn(entry->d_name, "0123456789") != strlen(entry->d_name))
+			continue;
+		
+		pid = (pid_t)strtol(entry->d_name, NULL, 10);
+		if (pid <= 0)
+			continue;
+		
+		/* Read process command */
+		if (read_proc_comm(pid, comm, sizeof(comm)) != 0)
+			continue;
+		
+		/* Read parent PID */
+		if (read_proc_ppid(pid, &ppid) != 0)
+			continue;
+		
+		bool should_track = trace_all;
+		
+		/* If not tracing all, check if this process matches any configured filter */
+		if (!trace_all && command_list && command_count > 0) {
+			should_track = false;
+			for (int i = 0; i < command_count; i++) {
+				if (command_matches_filter(comm, command_list[i])) {
+					should_track = true;
+					break;
+				}
+			}
+		}
+		
+		if (should_track) {
+			/* Add to tracked PIDs in eBPF map */
+			struct pid_info pid_info = {
+				.pid = pid,
+				.ppid = ppid,
+				.is_tracked = true
+			};
+			
+			int err = bpf_map__update_elem(skel->maps.tracked_pids, &pid, sizeof(pid),
+			                               &pid_info, sizeof(pid_info), BPF_ANY);
+			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
+				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
+			} else if (!trace_all) {
+				printf("  Found matching process: PID=%d, PPID=%d, COMM=%s\n", 
+					pid, ppid, comm);
+			}
+			if (!err)
+				tracked_count++;
+		}
+	}
+	
+	closedir(proc_dir);
+	printf("Initially tracking %d processes\n", tracked_count);
 	return 0;
 }
 

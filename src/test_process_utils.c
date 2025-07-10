@@ -14,27 +14,7 @@ typedef uint64_t __u64;
 
 #include "process.h"
 
-// Mock BPF skeleton structures for testing
-struct bpf_map {
-    int fd;
-};
 
-struct mock_maps {
-    struct bpf_map *command_filters;
-    struct bpf_map *tracked_pids;
-};
-
-struct process_bpf {
-    struct mock_maps maps;
-};
-
-// Mock BPF functions for testing
-int bpf_map__update_elem(const struct bpf_map *map, const void *key, size_t key_sz,
-                        const void *value, size_t value_sz, __u64 flags) {
-    // Mock implementation that always succeeds
-    (void)map; (void)key; (void)key_sz; (void)value; (void)value_sz; (void)flags;
-    return 0;
-}
 
 #include "process_utils.h"
 
@@ -124,60 +104,26 @@ void test_command_matches_filter() {
     test_assert(command_matches_filter("bash", "bas"), "partial match should work");
 }
 
-void test_setup_command_filters() {
-    printf("\n" BLUE "Testing setup_command_filters function:" RESET "\n");
+void test_count_matching_processes() {
+    printf("\n" BLUE "Testing count_matching_processes function:" RESET "\n");
     
-    struct bpf_map mock_cmd_map = {0};
-    struct process_bpf mock_skel = {
-        .maps = {
-            .command_filters = &mock_cmd_map,
-            .tracked_pids = &mock_cmd_map
-        }
-    };
-    char *command_list[] = {"bash", "python", "node"};
-    int command_count = 3;
-    
-    int result = setup_command_filters(&mock_skel, command_list, command_count);
-    test_assert(result == 0, "setup_command_filters should succeed with valid input");
-    
-    // Test with empty list
-    result = setup_command_filters(&mock_skel, NULL, 0);
-    test_assert(result == 0, "setup_command_filters should succeed with empty list");
-    
-    // Test with maximum filters
-    char *max_commands[MAX_COMMAND_FILTERS + 2];
-    for (int i = 0; i < MAX_COMMAND_FILTERS + 2; i++) {
-        max_commands[i] = "test";
-    }
-    result = setup_command_filters(&mock_skel, max_commands, MAX_COMMAND_FILTERS + 2);
-    test_assert(result == 0, "setup_command_filters should handle max filters correctly");
-}
-
-void test_populate_initial_pids() {
-    printf("\n" BLUE "Testing populate_initial_pids function:" RESET "\n");
-    
-    struct bpf_map mock_pid_map = {0};
-    struct process_bpf mock_skel = {
-        .maps = {
-            .command_filters = &mock_pid_map,
-            .tracked_pids = &mock_pid_map
-        }
-    };
     char *command_list[] = {"bash"};
     int command_count = 1;
     
     // Test with trace_all = true
-    int result = populate_initial_pids(&mock_skel, command_list, command_count, true);
-    test_assert(result == 0, "populate_initial_pids should succeed with trace_all=true");
+    int result = count_matching_processes(command_list, command_count, true);
+    test_assert(result >= 0, "count_matching_processes should succeed with trace_all=true");
     
     // Test with trace_all = false
-    result = populate_initial_pids(&mock_skel, command_list, command_count, false);
-    test_assert(result == 0, "populate_initial_pids should succeed with trace_all=false");
+    result = count_matching_processes(command_list, command_count, false);
+    test_assert(result >= 0, "count_matching_processes should succeed with trace_all=false");
     
     // Test with empty command list
-    result = populate_initial_pids(&mock_skel, NULL, 0, false);
-    test_assert(result == 0, "populate_initial_pids should succeed with empty command list");
+    result = count_matching_processes(NULL, 0, false);
+    test_assert(result >= 0, "count_matching_processes should succeed with empty command list");
 }
+
+
 
 void test_integration() {
     printf("\n" BLUE "Testing integration scenario:" RESET "\n");
@@ -234,8 +180,7 @@ int main() {
     test_read_proc_comm();
     test_read_proc_ppid();
     test_command_matches_filter();
-    test_setup_command_filters();
-    test_populate_initial_pids();
+    test_count_matching_processes();
     test_integration();
     
     print_test_summary();

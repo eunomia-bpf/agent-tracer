@@ -49,9 +49,11 @@ static int check_filter_callback(__u32 index, void *ctx)
 	__u32 i = index;
 	
 	filter = &command_filters[i];
+	if (filter->comm[0] == '\0')
+		return 0; /* continue loop - empty filter */
 
 	/* Check if command matches the filter string exactly */
-	if (bpf_strncmp(filter_ctx->comm, TASK_COMM_LEN, &filter->comm) == 0) {
+	if (bpf_strncmp(filter_ctx->comm, TASK_COMM_LEN, filter->comm) == 0) {
 		/* Add this PID to tracked list */
 		struct pid_info new_pid_info = {
 			.pid = filter_ctx->pid,
