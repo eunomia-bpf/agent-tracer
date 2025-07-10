@@ -1,64 +1,119 @@
-use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
-use tempfile::TempDir;
-use tokio::time::{sleep, Duration};
+use clap::{Parser, Subcommand};
 
+mod binary_extractor;
 mod process;
 mod sslsniff;
 
-// Embed the binaries at compile time
-const PROCESS_BINARY: &[u8] = include_bytes!("../../src/process");
-const SSLSNIFF_BINARY: &[u8] = include_bytes!("../../src/sslsniff");
+use binary_extractor::BinaryExtractor;
+
+#[derive(Parser)]
+#[command(name = "collector")]
+#[command(about = "A tracer collector for process and SSL events")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run process tracer
+    Process {
+        /// Additional arguments to pass to the process tracer
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Run SSL sniffer
+    Sslsniff {
+        /// Additional arguments to pass to the SSL sniffer
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Run both tracers
+    Both {
+        /// Additional arguments to pass to both tracers
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    
     println!("Starting collector...");
     
-    // Create a temporary directory
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
+    let extractor = BinaryExtractor::new().await?;
     
-    println!("Created temporary directory: {}", temp_path.display());
+    match cli.command {
+        Commands::Process { args } => {
+            run_process_tracer(&extractor, args).await?;
+        }
+        Commands::Sslsniff { args } => {
+            run_sslsniff_tracer(&extractor, args).await?;
+        }
+        Commands::Both { args } => {
+            run_both_tracers(&extractor, args).await?;
+        }
+    }
     
-    // Extract and setup the process binary
-    let process_path = temp_path.join("process");
-    {
-        let mut process_file = fs::File::create(&process_path)?;
-        process_file.write_all(PROCESS_BINARY)?;
-        process_file.flush()?;
-    } // File is closed here
+    Ok(())
+}
+
+async fn run_process_tracer(
+    extractor: &BinaryExtractor,
+    _args: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let process_collector = process::ProcessCollector::new(extractor.get_process_path());
     
-    // Make the process binary executable
-    let mut perms = fs::metadata(&process_path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&process_path, perms)?;
+    println!("Starting process binary...");
+    match process_collector.collect_events().await {
+        Ok(events) => {
+            println!("🔄 Process events collected: {}", events.len());
+            println!("{}", "=".repeat(60));
+            for event in events {
+                println!("{}", event);
+                println!("{}", "-".repeat(60));
+            }
+        }
+        Err(e) => {
+            println!("❌ Error collecting process events: {}", e);
+        }
+    }
     
-    println!("Extracted process binary to: {}", process_path.display());
+    Ok(())
+}
+
+async fn run_sslsniff_tracer(
+    extractor: &BinaryExtractor,
+    _args: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sslsniff_collector = sslsniff::SslSniffCollector::new(extractor.get_sslsniff_path());
     
-    // Extract and setup the sslsniff binary
-    let sslsniff_path = temp_path.join("sslsniff");
-    {
-        let mut sslsniff_file = fs::File::create(&sslsniff_path)?;
-        sslsniff_file.write_all(SSLSNIFF_BINARY)?;
-        sslsniff_file.flush()?;
-    } // File is closed here
+    println!("Starting sslsniff binary...");
+    match sslsniff_collector.collect_events().await {
+        Ok(events) => {
+            println!("🔐 SSL events collected: {}", events.len());
+            println!("{}", "=".repeat(60));
+            for event in events {
+                println!("{}", event);
+                println!("{}", "-".repeat(60));
+            }
+        }
+        Err(e) => {
+            println!("❌ Error collecting SSL events: {}", e);
+        }
+    }
     
-    // Make the sslsniff binary executable
-    let mut perms = fs::metadata(&sslsniff_path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&sslsniff_path, perms)?;
+    Ok(())
+}
+
+async fn run_both_tracers(
+    extractor: &BinaryExtractor,
+    _args: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let process_collector = process::ProcessCollector::new(extractor.get_process_path());
+    let sslsniff_collector = sslsniff::SslSniffCollector::new(extractor.get_sslsniff_path());
     
-    println!("Extracted sslsniff binary to: {}", sslsniff_path.display());
-    
-    // Small delay to ensure files are fully written
-    sleep(Duration::from_millis(100)).await;
-    
-    // Create collectors
-    let process_collector = process::ProcessCollector::new(&process_path);
-    let sslsniff_collector = sslsniff::SslSniffCollector::new(&sslsniff_path);
-    
-    // Start the process binary in background
     let process_handle = tokio::spawn(async move {
         println!("Starting process binary...");
         match process_collector.collect_events().await {
@@ -76,7 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     
-    // Start the sslsniff binary in background
     let sslsniff_handle = tokio::spawn(async move {
         println!("Starting sslsniff binary...");
         match sslsniff_collector.collect_events().await {
@@ -94,11 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     
-    // Wait for both processes to complete
     let _ = tokio::join!(process_handle, sslsniff_handle);
     
     println!("Both binaries have completed execution");
     
-    // The temporary directory will be automatically cleaned up when temp_dir goes out of scope
     Ok(())
 }
