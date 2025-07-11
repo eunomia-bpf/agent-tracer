@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-/// HTTP Request/Response analyzer that pairs HTTP requests with their responses
+/// HTTP Request/Response analyzer that pairs HTTP requests with their responses by thread/PID
 pub struct HttpAnalyzer {
     name: String,
-    pending_requests: HashMap<String, PendingRequest>,
-    connection_buffers: HashMap<String, String>, // Buffer partial HTTP data per connection
+    pending_requests: HashMap<String, PendingRequest>, // Key: "pid_url"
+    thread_buffers: HashMap<u32, String>, // Buffer partial HTTP data per thread/PID
     max_wait_time_ms: u64,
 }
 
@@ -26,7 +26,7 @@ struct PendingRequest {
     body: Option<String>,
     timestamp: u64,
     pid: u32,
-    connection_id: String,
+    original_json: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +36,8 @@ struct HttpResponse {
     headers: HashMap<String, String>,
     body: Option<String>,
     timestamp: u64,
+    pid: u32,
+    original_json: Value,
 }
 
 impl HttpAnalyzer {
@@ -44,8 +46,8 @@ impl HttpAnalyzer {
         Self {
             name: "HttpAnalyzer".to_string(),
             pending_requests: HashMap::new(),
-            connection_buffers: HashMap::new(),
-            max_wait_time_ms: 30000, // 30 seconds to allow for slow responses
+            thread_buffers: HashMap::new(),
+            max_wait_time_ms: 30000, // 30 seconds
         }
     }
 
@@ -54,155 +56,103 @@ impl HttpAnalyzer {
         Self {
             name: "HttpAnalyzer".to_string(),
             pending_requests: HashMap::new(),
-            connection_buffers: HashMap::new(),
+            thread_buffers: HashMap::new(),
             max_wait_time_ms,
         }
     }
 
-    /// Check if buffered data contains a complete HTTP request
-    fn is_complete_http_request(data: &str) -> bool {
-        let lines: Vec<&str> = data.lines().collect();
-        if lines.is_empty() {
-            return false;
-        }
-        
-        // Check if first line is a valid HTTP request
-        let first_line = lines[0];
-        let is_request_line = first_line.starts_with("GET ") || first_line.starts_with("POST ") ||
-            first_line.starts_with("PUT ") || first_line.starts_with("DELETE ") ||
-            first_line.starts_with("HEAD ") || first_line.starts_with("PATCH ") ||
-            first_line.starts_with("OPTIONS ") || first_line.starts_with("CONNECT ");
-            
-        if !is_request_line {
-            return false;
-        }
-        
-        // Find end of headers (empty line)
-        let mut header_end = None;
-        for (i, line) in lines.iter().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                header_end = Some(i);
-                break;
-            }
-        }
-        
-        if let Some(header_end_idx) = header_end {
-            // Check if we have Content-Length header
-            let mut content_length = 0;
-            for line in &lines[1..header_end_idx] {
-                if let Some(colon_pos) = line.find(':') {
-                    let key = line[..colon_pos].trim().to_lowercase();
-                    if key == "content-length" {
-                        if let Ok(len) = line[colon_pos + 1..].trim().parse::<usize>() {
-                            content_length = len;
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            // If no body expected, request is complete
-            if content_length == 0 {
-                return true;
-            }
-            
-            // Check if we have the complete body
-            let body_start = header_end_idx + 1;
-            if body_start < lines.len() {
-                let body = lines[body_start..].join("\n");
-                return body.len() >= content_length;
-            }
-        }
-        
-        false
+    /// Check if data starts with HTTP request
+    fn starts_with_http_request(data: &str) -> bool {
+        let first_line = data.lines().next().unwrap_or("");
+        first_line.starts_with("GET ") || first_line.starts_with("POST ") ||
+        first_line.starts_with("PUT ") || first_line.starts_with("DELETE ") ||
+        first_line.starts_with("HEAD ") || first_line.starts_with("PATCH ") ||
+        first_line.starts_with("OPTIONS ") || first_line.starts_with("CONNECT ")
     }
 
-    /// Check if buffered data contains a complete HTTP response
-    fn is_complete_http_response(data: &str) -> bool {
-        let lines: Vec<&str> = data.lines().collect();
-        if lines.is_empty() {
-            return false;
-        }
+    /// Check if data starts with HTTP response  
+    fn starts_with_http_response(data: &str) -> bool {
+        let first_line = data.lines().next().unwrap_or("");
+        first_line.starts_with("HTTP/1.") || first_line.starts_with("HTTP/2")
+    }
+
+    /// Extract complete HTTP messages from buffer
+    fn extract_http_messages(buffer: &str) -> Vec<(String, usize)> {
+        let mut messages = Vec::new();
+        let mut current_pos = 0;
+        let buffer_bytes = buffer.as_bytes();
         
-        // Check if first line is a valid HTTP response
-        let first_line = lines[0];
-        let is_response_line = first_line.starts_with("HTTP/1.") || first_line.starts_with("HTTP/2");
-        
-        if !is_response_line {
-            return false;
-        }
-        
-        // Find end of headers (empty line)
-        let mut header_end = None;
-        for (i, line) in lines.iter().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                header_end = Some(i);
-                break;
+        while current_pos < buffer.len() {
+            let remaining = &buffer[current_pos..];
+            
+            // Skip non-HTTP data
+            if !Self::starts_with_http_request(remaining) && !Self::starts_with_http_response(remaining) {
+                current_pos += 1;
+                continue;
             }
-        }
-        
-        if let Some(header_end_idx) = header_end {
-            // Check if we have Content-Length header
+            
+            // Find end of headers (double newline)
+            let header_end = if let Some(pos) = remaining.find("\r\n\r\n") {
+                pos + 4
+            } else if let Some(pos) = remaining.find("\n\n") {
+                pos + 2
+            } else {
+                // Headers not complete yet
+                break;
+            };
+            
+            let headers_part = &remaining[..header_end];
             let mut content_length = 0;
             let mut is_chunked = false;
             
-            for line in &lines[1..header_end_idx] {
+            // Parse headers to get content length
+            for line in headers_part.lines().skip(1) {
+                if line.trim().is_empty() {
+                    break;
+                }
                 if let Some(colon_pos) = line.find(':') {
                     let key = line[..colon_pos].trim().to_lowercase();
                     let value = line[colon_pos + 1..].trim().to_lowercase();
                     
                     if key == "content-length" {
-                        if let Ok(len) = value.parse::<usize>() {
-                            content_length = len;
-                        }
+                        content_length = value.parse::<usize>().unwrap_or(0);
                     } else if key == "transfer-encoding" && value.contains("chunked") {
                         is_chunked = true;
                     }
                 }
             }
             
-            // If no body expected, response is complete
-            if content_length == 0 && !is_chunked {
-                return true;
-            }
+            let message_end = if is_chunked {
+                // For chunked encoding, look for "0\r\n\r\n" or "0\n\n"
+                if let Some(pos) = remaining.find("\r\n0\r\n\r\n") {
+                    pos + 7
+                } else if let Some(pos) = remaining.find("\n0\n\n") {
+                    pos + 4
+                } else {
+                    // Chunked message not complete
+                    break;
+                }
+            } else {
+                // Use content-length
+                header_end + content_length
+            };
             
-            // For chunked encoding, look for "0\r\n\r\n" at the end
-            if is_chunked {
-                return data.ends_with("\r\n0\r\n\r\n") || data.ends_with("\n0\n\n");
-            }
-            
-            // Check if we have the complete body based on Content-Length
-            let body_start = header_end_idx + 1;
-            if body_start < lines.len() {
-                let body = lines[body_start..].join("\n");
-                return body.len() >= content_length;
+            if message_end <= remaining.len() {
+                let message = remaining[..message_end].to_string();
+                messages.push((message, current_pos + message_end));
+                current_pos += message_end;
+            } else {
+                // Message not complete yet
+                break;
             }
         }
         
-        false
-    }
-
-    /// Create connection identifier from event
-    fn create_connection_id(event: &Event) -> String {
-        let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        
-        // Try to use socket information for better connection tracking
-        if let (Some(src_ip), Some(src_port), Some(dst_ip), Some(dst_port)) = (
-            event.data.get("src_ip").and_then(|v| v.as_str()),
-            event.data.get("src_port").and_then(|v| v.as_u64()),
-            event.data.get("dst_ip").and_then(|v| v.as_str()),
-            event.data.get("dst_port").and_then(|v| v.as_u64()),
-        ) {
-            format!("{}:{}->{}:{}", src_ip, src_port, dst_ip, dst_port)
-        } else {
-            // Fallback to PID-based connection ID
-            format!("pid_{}", pid)
-        }
+        messages
     }
 
     /// Parse HTTP request from complete HTTP data
     fn parse_http_request(data: &str, event: &Event) -> Option<PendingRequest> {
-        let lines: Vec<&str> = data.split('\n').collect();
+        let lines: Vec<&str> = data.lines().collect();
         if lines.is_empty() {
             return None;
         }
@@ -243,7 +193,6 @@ impl HttpAnalyzer {
         };
 
         let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let connection_id = Self::create_connection_id(event);
 
         Some(PendingRequest {
             event: event.clone(),
@@ -253,13 +202,13 @@ impl HttpAnalyzer {
             body,
             timestamp: event.timestamp,
             pid,
-            connection_id,
+            original_json: event.data.clone(),
         })
     }
 
     /// Parse HTTP response from complete HTTP data
-    fn parse_http_response(data: &str) -> Option<HttpResponse> {
-        let lines: Vec<&str> = data.split('\n').collect();
+    fn parse_http_response(data: &str, event: &Event) -> Option<HttpResponse> {
+        let lines: Vec<&str> = data.lines().collect();
         if lines.is_empty() {
             return None;
         }
@@ -308,40 +257,50 @@ impl HttpAnalyzer {
             .unwrap_or_default()
             .as_millis() as u64;
 
+        let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
         Some(HttpResponse {
             status_code,
             status_text,
             headers,
             body,
             timestamp,
+            pid,
+            original_json: event.data.clone(),
         })
     }
 
-    /// Create a request/response pair event
+    /// Create a request/response pair event with debug information
     fn create_request_response_pair(
         request: &PendingRequest,
         response: &HttpResponse,
     ) -> Event {
         let pair_data = json!({
             "type": "http_request_response_pair",
+            "thread_id": request.pid,
             "request": {
                 "method": request.method,
                 "url": request.url,
                 "headers": request.headers,
                 "body": request.body,
                 "timestamp": request.timestamp,
-                "pid": request.pid,
-                "original_event_id": request.event.id
+                "original_json": request.original_json
             },
             "response": {
                 "status_code": response.status_code,
                 "status_text": response.status_text,
                 "headers": response.headers,
                 "body": response.body,
-                "timestamp": response.timestamp
+                "timestamp": response.timestamp,
+                "original_json": response.original_json
             },
             "duration_ms": response.timestamp.saturating_sub(request.timestamp),
-            "connection_id": request.connection_id
+            "debug_info": {
+                "request_stored_at": request.timestamp,
+                "response_received_at": response.timestamp,
+                "matched_by": "thread_id",
+                "thread_id": request.pid
+            }
         });
 
         Event::new("http_analyzer".to_string(), pair_data)
@@ -357,8 +316,10 @@ impl HttpAnalyzer {
 
         for key in expired_keys {
             if let Some(expired_request) = self.pending_requests.remove(&key) {
-                eprintln!("HTTP Analyzer: Request expired after {}ms: {} {}", 
-                    self.max_wait_time_ms, expired_request.method, expired_request.url);
+                eprintln!("HTTP Analyzer: Request expired after {}ms: {} {} (thread: {})", 
+                    self.max_wait_time_ms, expired_request.method, expired_request.url, expired_request.pid);
+                eprintln!("HTTP Analyzer: Original JSON: {}", 
+                    serde_json::to_string_pretty(&expired_request.original_json).unwrap_or_default());
             }
         }
     }
@@ -377,10 +338,16 @@ impl Analyzer for HttpAnalyzer {
         
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         
-        // Move the entire processing logic here with access to mutable self
+        // Process events with thread-based matching
         while let Some(event) = stream.next().await {
+            // Debug: Print original event JSON
+            eprintln!("HTTP Analyzer: Received event from source: {}", event.source);
+            eprintln!("HTTP Analyzer: Event JSON: {}", 
+                serde_json::to_string_pretty(&event.data).unwrap_or_default());
+            
             // Only process SSL events
             if event.source != "ssl" {
+                eprintln!("HTTP Analyzer: Forwarding non-SSL event");
                 if tx.send(event).is_err() {
                     break;
                 }
@@ -392,6 +359,7 @@ impl Analyzer for HttpAnalyzer {
                 match data {
                     Value::String(s) => s.clone(),
                     _ => {
+                        eprintln!("HTTP Analyzer: SSL data is not a string, forwarding");
                         if tx.send(event).is_err() {
                             break;
                         }
@@ -399,6 +367,7 @@ impl Analyzer for HttpAnalyzer {
                     }
                 }
             } else {
+                eprintln!("HTTP Analyzer: No data field in SSL event, forwarding");
                 if tx.send(event).is_err() {
                     break;
                 }
@@ -406,80 +375,113 @@ impl Analyzer for HttpAnalyzer {
             };
 
             let current_time = event.timestamp;
-            let connection_id = Self::create_connection_id(&event);
+            let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
             
             // Clean up expired requests periodically
             self.cleanup_expired_requests(current_time);
 
-            // Buffer the SSL data for this connection
-            let current_buffer = self.connection_buffers.entry(connection_id.clone()).or_insert_with(String::new);
+            // Buffer the SSL data for this thread/PID
+            let current_buffer = self.thread_buffers.entry(pid).or_insert_with(String::new);
             current_buffer.push_str(&data_str);
 
-            eprintln!("HTTP Analyzer: Buffered data for {}: {} chars", 
-                connection_id, current_buffer.len());
+            eprintln!("HTTP Analyzer: Buffered {} chars for thread {}, data: {}", 
+                current_buffer.len(), pid,
+                if data_str.len() > 100 { &data_str[..100] } else { &data_str });
 
-            // Check if we have a complete HTTP request
-            if Self::is_complete_http_request(current_buffer) {
-                eprintln!("HTTP Analyzer: Found complete HTTP request");
-                if let Some(request) = Self::parse_http_request(current_buffer, &event) {
-                    let key = format!("{}_{}", request.connection_id, request.url);
-                    self.pending_requests.insert(key, request.clone());
-                    eprintln!("HTTP Analyzer: ✅ Stored request {} {} (total pending: {})", 
-                        request.method, request.url, self.pending_requests.len());
-                }
-                // Clear the buffer after processing
-                self.connection_buffers.remove(&connection_id);
-            }
-            // Check if we have a complete HTTP response
-            else if Self::is_complete_http_response(current_buffer) {
-                eprintln!("HTTP Analyzer: Found complete HTTP response");
-                if let Some(response) = Self::parse_http_response(current_buffer) {
-                    // Try to find matching request
-                    let mut matched_key = None;
-                    let mut best_match_score = f64::MAX;
+            // Extract complete HTTP messages from buffer
+            let messages = Self::extract_http_messages(current_buffer);
+            
+            if !messages.is_empty() {
+                eprintln!("HTTP Analyzer: Found {} complete HTTP messages for thread {}", 
+                    messages.len(), pid);
+                
+                // Process each complete message
+                for (message, _) in &messages {
+                    eprintln!("HTTP Analyzer: Processing message: {}", 
+                        if message.len() > 200 { &message[..200] } else { message });
                     
-                    eprintln!("HTTP Analyzer: Looking for request match with connection_id: {}", connection_id);
-                    for (key, request) in &self.pending_requests {
-                        eprintln!("HTTP Analyzer: Checking pending request: {} (connection: {})", 
-                            key, request.connection_id);
-                        
-                        if request.connection_id == connection_id {
-                            let time_diff = current_time.saturating_sub(request.timestamp) as f64;
-                            eprintln!("HTTP Analyzer: Connection match found, time_diff: {}ms", time_diff);
-                            if time_diff < self.max_wait_time_ms as f64 && time_diff < best_match_score {
-                                best_match_score = time_diff;
-                                matched_key = Some(key.clone());
-                            }
+                    if Self::starts_with_http_request(message) {
+                        eprintln!("HTTP Analyzer: Found complete HTTP request for thread {}", pid);
+                        if let Some(request) = Self::parse_http_request(message, &event) {
+                            let key = format!("{}_{}", request.pid, request.url);
+                            eprintln!("HTTP Analyzer: Storing request with key: {}", key);
+                            eprintln!("HTTP Analyzer: Request details: {} {} (thread: {})", 
+                                request.method, request.url, request.pid);
+                            
+                            self.pending_requests.insert(key, request.clone());
+                            eprintln!("HTTP Analyzer: Total pending requests: {}", self.pending_requests.len());
+                        } else {
+                            eprintln!("HTTP Analyzer: Failed to parse HTTP request");
                         }
-                    }
+                    } else if Self::starts_with_http_response(message) {
+                        eprintln!("HTTP Analyzer: Found complete HTTP response for thread {}", pid);
+                        if let Some(response) = Self::parse_http_response(message, &event) {
+                            eprintln!("HTTP Analyzer: Response details: {} {} (thread: {})", 
+                                response.status_code, response.status_text, response.pid);
+                            
+                            // Try to find matching request by thread/PID
+                            let mut matched_key = None;
+                            let mut best_match_score = f64::MAX;
+                            
+                            eprintln!("HTTP Analyzer: Looking for request match for thread: {}", pid);
+                            for (key, request) in &self.pending_requests {
+                                eprintln!("HTTP Analyzer: Checking pending request: {} (thread: {})", 
+                                    key, request.pid);
+                                
+                                // Match by thread/PID first, then by timing
+                                if request.pid == pid {
+                                    let time_diff = current_time.saturating_sub(request.timestamp) as f64;
+                                    eprintln!("HTTP Analyzer: Thread match found! Time diff: {}ms", time_diff);
+                                    if time_diff < self.max_wait_time_ms as f64 && time_diff < best_match_score {
+                                        best_match_score = time_diff;
+                                        matched_key = Some(key.clone());
+                                        eprintln!("HTTP Analyzer: Best match so far: {} ({}ms)", key, time_diff);
+                                    }
+                                }
+                            }
 
-                    if let Some(key) = matched_key {
-                        if let Some(request) = self.pending_requests.remove(&key) {
-                            let pair_event = Self::create_request_response_pair(&request, &response);
-                            eprintln!("HTTP Analyzer: ✅ Created request/response pair: {} {} -> {} {} ({}ms)", 
-                                request.method, request.url, response.status_code, response.status_text, best_match_score);
-                            if tx.send(pair_event).is_err() {
-                                break;
+                            if let Some(key) = matched_key {
+                                if let Some(request) = self.pending_requests.remove(&key) {
+                                    let pair_event = Self::create_request_response_pair(&request, &response);
+                                    eprintln!("HTTP Analyzer: Created request/response pair!");
+                                    eprintln!("HTTP Analyzer: Request:  {} {} (thread: {})", 
+                                        request.method, request.url, request.pid);
+                                    eprintln!("HTTP Analyzer: Response: {} {} ({}ms latency)", 
+                                        response.status_code, response.status_text, best_match_score);
+                                    eprintln!("HTTP Analyzer: Matched by thread ID: {}", request.pid);
+                                    eprintln!("HTTP Analyzer: Pair JSON: {}", 
+                                        serde_json::to_string_pretty(&pair_event.data).unwrap_or_default());
+                                    
+                                    if tx.send(pair_event).is_err() {
+                                        break;
+                                    }
+                                }
+                            } else {
+                                eprintln!("HTTP Analyzer: No matching request found for response: {} {} (thread: {})", 
+                                    response.status_code, response.status_text, pid);
+                                eprintln!("HTTP Analyzer: Current pending requests by thread:");
+                                for (key, req) in &self.pending_requests {
+                                    eprintln!("HTTP Analyzer:   - {}: {} {} (thread: {})", 
+                                        key, req.method, req.url, req.pid);
+                                }
                             }
+                        } else {
+                            eprintln!("HTTP Analyzer: Failed to parse HTTP response");
                         }
-                    } else {
-                        eprintln!("HTTP Analyzer: ❌ No matching request found for response: {} {} (connection: {})", 
-                            response.status_code, response.status_text, connection_id);
                     }
                 }
-                // Clear the buffer after processing
-                self.connection_buffers.remove(&connection_id);
+                
+                // Remove processed messages from buffer
+                let last_end = messages.last().unwrap().1;
+                *current_buffer = current_buffer[last_end..].to_string();
+                eprintln!("HTTP Analyzer: Buffer after processing: {} chars remaining", current_buffer.len());
             }
+            
             // If buffer is getting too large without finding complete HTTP data, clear it
-            else if current_buffer.len() > 65536 { // 64KB limit
-                eprintln!("HTTP Analyzer: Buffer too large, clearing for connection: {}", connection_id);
-                self.connection_buffers.remove(&connection_id);
-            }
-            // For small fragments, just log and continue buffering
-            else {
-                eprintln!("HTTP Analyzer: Buffering fragment ({}): {}", 
-                    current_buffer.len(),
-                    if data_str.len() > 50 { &data_str[..50] } else { &data_str });
+            if current_buffer.len() > 65536 { // 64KB limit
+                eprintln!("HTTP Analyzer: Buffer too large ({}), clearing for thread: {}", 
+                    current_buffer.len(), pid);
+                self.thread_buffers.remove(&pid);
             }
         }
 
@@ -518,11 +520,16 @@ mod tests {
     async fn test_http_response_parsing() {
         let http_data = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"status\":\"ok\"}";
         
-        let response = HttpAnalyzer::parse_http_response(http_data).unwrap();
+        let response = HttpAnalyzer::parse_http_response(http_data, &Event::new("ssl".to_string(), json!({
+            "data": http_data,
+            "pid": 1234,
+            "timestamp_ns": 1234567890
+        }))).unwrap();
         assert_eq!(response.status_code, 200);
         assert_eq!(response.status_text, "OK");
         assert_eq!(response.headers.get("content-type"), Some(&"application/json".to_string()));
         assert_eq!(response.body, Some("{\"status\":\"ok\"}".to_string()));
+        assert_eq!(response.pid, 1234);
     }
 
     #[tokio::test]
@@ -558,6 +565,7 @@ mod tests {
         assert_eq!(collected[0].data["type"], "http_request_response_pair");
         assert_eq!(collected[0].data["request"]["method"], "GET");
         assert_eq!(collected[0].data["response"]["status_code"], 200);
+        assert_eq!(collected[0].data["thread_id"], 1234);
     }
 
     #[tokio::test]
