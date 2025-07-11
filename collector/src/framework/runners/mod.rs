@@ -32,8 +32,6 @@ pub trait Runner: Send + Sync {
 /// Configuration for SSL/TLS monitoring
 #[derive(Debug, Clone)]
 pub struct SslConfig {
-    pub port: Option<u16>,
-    pub interface: Option<String>,
     #[allow(dead_code)]
     pub tls_version: Option<String>,
 }
@@ -41,8 +39,6 @@ pub struct SslConfig {
 impl Default for SslConfig {
     fn default() -> Self {
         Self {
-            port: Some(443),
-            interface: None,
             tls_version: None,
         }
     }
@@ -53,8 +49,6 @@ impl Default for SslConfig {
 pub struct ProcessConfig {
     #[allow(dead_code)]
     pub pid: Option<u32>,
-    pub name: Option<String>,
-    pub cpu_threshold: Option<f32>,
     #[allow(dead_code)]
     pub memory_threshold: Option<u64>,
 }
@@ -63,8 +57,6 @@ impl Default for ProcessConfig {
     fn default() -> Self {
         Self {
             pid: None,
-            name: None,
-            cpu_threshold: None,
             memory_threshold: None,
         }
     }

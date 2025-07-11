@@ -31,7 +31,6 @@ mod comprehensive_analyzer_chain_tests {
     use serde_json::json;
     use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     use std::time::Instant;
-    use tokio::sync::Mutex;
     use tokio::time::Duration;
     use tempfile::NamedTempFile;
 

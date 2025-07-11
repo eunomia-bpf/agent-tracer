@@ -33,17 +33,7 @@ impl SslRunner {
         self
     }
 
-    /// Set the port to monitor
-    pub fn port(mut self, port: u16) -> Self {
-        self.config.port = Some(port);
-        self
-    }
 
-    /// Set the network interface to monitor
-    pub fn interface(mut self, interface: String) -> Self {
-        self.config.interface = Some(interface);
-        self
-    }
 
     /// Set the TLS version filter
     #[allow(dead_code)]
@@ -105,19 +95,14 @@ mod tests {
         let runner = SslRunner::from_binary_extractor("/fake/path/sslsniff");
         assert_eq!(runner.name(), "ssl");
         assert!(!runner.id().is_empty());
-        assert_eq!(runner.config.port, Some(443));
     }
 
     #[test]
     fn test_ssl_runner_with_custom_config() {
         let runner = SslRunner::from_binary_extractor("/fake/path/sslsniff")
-            .with_id("test-ssl".to_string())
-            .port(8443)
-            .interface("eth0".to_string());
+            .with_id("test-ssl".to_string());
 
         assert_eq!(runner.id(), "test-ssl");
-        assert_eq!(runner.config.port, Some(8443));
-        assert_eq!(runner.config.interface, Some("eth0".to_string()));
     }
 
     /// Test that actually runs the real SSL binary
@@ -139,7 +124,7 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
         use tokio::time::{timeout, interval};
-        use tokio_stream::StreamExt;
+
         
         // Initialize debug logging for the test
         let _ = env_logger::Builder::from_default_env()
@@ -166,8 +151,6 @@ mod tests {
         // Create runner with real binary
         let mut runner = SslRunner::from_binary_extractor(binary_path)
             .with_id("real-ssl-test".to_string())
-            .port(443) // Monitor HTTPS traffic
-            .interface("any".to_string()) // Monitor all interfaces
             .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new()));
         
         // Run the binary and collect events for 30 seconds

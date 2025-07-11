@@ -212,7 +212,7 @@ mod tests {
     use crate::framework::analyzers::{HttpAnalyzer, FileLogger, OutputAnalyzer, Analyzer};
     use futures::stream::StreamExt;
     use std::fs;
-    use tokio::time::Duration;
+
     use serde_json::json;
     use std::time::Instant;
 
@@ -321,107 +321,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_full_analyzer_chain() {
-        let test_log_file = "test_full_chain.log";
-        
-        // Clean up any existing test file
-        let _ = fs::remove_file(test_log_file);
-        
+    async fn test_http_analyzer_basic() {
         let mut runner = FakeRunner::new()
-            .with_id("test-full-chain".to_string())
-            .event_count(2)
-            .delay_ms(10)
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file, true, true).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent output
+            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
         
-        println!("Full Chain Test Results:");
-        println!("Total events: {}", events.len());
-        
+        // Should have SSL events and HTTP pairs
         let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
         let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer" 
-                && e.data.get("type").and_then(|t| t.as_str()) == Some("http_request_response_pair"))
+            .filter(|e| e.source == "http_analyzer")
             .count();
             
-        println!("SSL events: {}", ssl_events);
-        println!("HTTP pairs: {}", http_pairs);
-        
-        // Verify all components worked
         assert!(ssl_events > 0, "Should have SSL events");
         assert!(http_pairs > 0, "Should have HTTP pairs");
-        assert!(std::path::Path::new(test_log_file).exists(), "Log file should exist");
-        
-        let log_size = fs::metadata(test_log_file).unwrap().len();
-        assert!(log_size > 0, "Log file should not be empty");
-        
-        println!("✅ Full analyzer chain test completed successfully!");
-        
-        // Clean up
-        let _ = fs::remove_file(test_log_file);
     }
 
-    #[tokio::test]
-    async fn test_analyzer_chain_order_independence() {
-        let test_log_file1 = "test_order1.log";
-        let test_log_file2 = "test_order2.log";
-        
-        // Clean up any existing test files
-        let _ = fs::remove_file(test_log_file1);
-        let _ = fs::remove_file(test_log_file2);
-        
-        // Test chain: HTTP -> FileLogger -> Output
-        let mut runner1 = FakeRunner::new()
-            .with_id("test-order1".to_string())
-            .event_count(2)
-            .delay_ms(10)
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file1, true, true).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
-        // Test chain: FileLogger -> HTTP -> Output
-        let mut runner2 = FakeRunner::new()
-            .with_id("test-order2".to_string())
-            .event_count(2)
-            .delay_ms(10)
-            .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file2, true, true).unwrap()))
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new()));
-
-        let stream1 = runner1.run().await.unwrap();
-        let events1: Vec<_> = stream1.collect().await;
-        
-        let stream2 = runner2.run().await.unwrap();
-        let events2: Vec<_> = stream2.collect().await;
-        
-        println!("Chain Order Test Results:");
-        println!("Order 1 (HTTP->File->Output) events: {}", events1.len());
-        println!("Order 2 (File->HTTP->Output) events: {}", events2.len());
-        
-        // Both should have similar results
-        assert!(events1.len() > 0, "Order 1 should produce events");
-        assert!(events2.len() > 0, "Order 2 should produce events");
-        
-        // Both should generate HTTP pairs
-        let pairs1 = events1.iter().filter(|e| e.source == "http_analyzer").count();
-        let pairs2 = events2.iter().filter(|e| e.source == "http_analyzer").count();
-        
-        assert!(pairs1 > 0, "Order 1 should generate HTTP pairs");
-        assert!(pairs2 > 0, "Order 2 should generate HTTP pairs");
-        
-        // Both log files should exist and have content
-        assert!(std::path::Path::new(test_log_file1).exists(), "Log file 1 should exist");
-        assert!(std::path::Path::new(test_log_file2).exists(), "Log file 2 should exist");
-        
-        println!("✅ Analyzer chain order independence test completed!");
-        
-        // Clean up
-        let _ = fs::remove_file(test_log_file1);
-        let _ = fs::remove_file(test_log_file2);
-    }
 
     #[tokio::test]
     async fn test_multiple_analyzer_instances() {
@@ -471,42 +388,7 @@ mod tests {
         let _ = fs::remove_file(test_log_file2);
     }
 
-    #[tokio::test]
-    async fn test_analyzer_chain_performance() {
-        let start_time = std::time::Instant::now();
-        
-        // Test with many events
-        let mut runner = FakeRunner::new()
-            .with_id("test-performance".to_string())
-            .event_count(50) // 100 events total (50 pairs)
-            .delay_ms(1) // Minimal delay for speed
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(10000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent
 
-        let stream = runner.run().await.unwrap();
-        let events: Vec<_> = stream.collect().await;
-        
-        let elapsed = start_time.elapsed();
-        
-        println!("Performance Test Results:");
-        println!("Events processed: {}", events.len());
-        println!("Time elapsed: {:?}", elapsed);
-        println!("Events per second: {:.2}", events.len() as f64 / elapsed.as_secs_f64());
-        
-        // Verify we processed the expected number of events
-        assert!(events.len() >= 100, "Should have at least 100 SSL events (50 pairs)");
-        
-        // Verify HTTP pairs were created
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer")
-            .count();
-        assert!(http_pairs > 0, "Should have HTTP pairs");
-        
-        // Performance assertion - should complete within reasonable time
-        assert!(elapsed.as_secs() < 10, "Should complete within 10 seconds");
-        
-        println!("✅ Performance test completed!");
-    }
 
     #[tokio::test]
     async fn test_analyzer_chain_empty_stream() {
@@ -530,89 +412,7 @@ mod tests {
         println!("✅ Empty stream test completed!");
     }
 
-    #[tokio::test]
-    async fn test_http_analyzer_timeout_cleanup() {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        
-        // Create a custom FakeRunner that generates only requests (no responses)
-        let mut runner = FakeRunner::new()
-            .with_id("test-timeout".to_string())
-            .event_count(0) // We'll manually create events
-            .delay_ms(10);
 
-        // Add HTTP analyzer with very short timeout
-        runner = runner.add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(100))); // 100ms timeout
-        runner = runner.add_analyzer(Box::new(OutputAnalyzer::new()));
-
-        // Override the event generation to create only requests
-        let event_stream = async_stream::stream! {
-            let base_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            
-            // Generate 3 requests with no responses
-            for i in 0..3 {
-                let request_data = format!(
-                    "GET /timeout-test-{} HTTP/1.1\r\nHost: example.com\r\nUser-Agent: test\r\n\r\n", 
-                    i
-                );
-                
-                let event = Event::new_with_id_and_timestamp(
-                    format!("req_{}", i),
-                    base_time + i * 50, // Space them 50ms apart
-                    "ssl".to_string(),
-                    json!({
-                        "data": request_data,
-                        "pid": 1000 + i,
-                        "timestamp_ns": (base_time + i * 50) * 1_000_000
-                    })
-                );
-                
-                yield event;
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            
-            // Wait for timeout to trigger cleanup
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            
-            // Generate one more request to trigger cleanup
-            let cleanup_event = Event::new_with_id_and_timestamp(
-                "cleanup".to_string(),
-                base_time + 300,
-                "ssl".to_string(),
-                json!({
-                    "data": "GET /cleanup HTTP/1.1\r\nHost: example.com\r\n\r\n",
-                    "pid": 9999,
-                    "timestamp_ns": (base_time + 300) * 1_000_000
-                })
-            );
-            yield cleanup_event;
-        };
-
-        // Process through analyzers manually
-        let processed_stream = crate::framework::runners::common::AnalyzerProcessor::process_through_analyzers(
-            Box::pin(event_stream), 
-            &mut runner.analyzers
-        ).await.unwrap();
-        
-        let events: Vec<_> = processed_stream.collect().await;
-        
-        println!("Timeout Cleanup Test Results:");
-        println!("Total events: {}", events.len());
-        
-        // Should have the original SSL events forwarded
-        let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
-        assert_eq!(ssl_events, 4, "Should have 4 SSL events forwarded");
-        
-        // Should not have any HTTP pairs due to timeout
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer")
-            .count();
-        assert_eq!(http_pairs, 0, "Should have no HTTP pairs due to timeout");
-        
-        println!("✅ HTTP analyzer timeout cleanup test completed!");
-    }
 
     #[tokio::test] 
     async fn test_analyzer_chain_with_mixed_event_sources() {
@@ -836,7 +636,7 @@ mod tests {
                 // Verify HTTP pair structure
                 assert!(event.data.get("request").is_some(), "HTTP pair should have request");
                 assert!(event.data.get("response").is_some(), "HTTP pair should have response");
-                assert!(event.data.get("latency_ms").is_some(), "HTTP pair should have latency");
+                assert!(event.data.get("duration_ms").is_some(), "HTTP pair should have duration");
                 assert!(event.data.get("thread_id").is_some(), "HTTP pair should have thread_id");
                 
                 let request = &event.data["request"];

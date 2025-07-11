@@ -159,7 +159,6 @@ impl HttpParser {
         let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
         Some(PendingRequest {
-            event: event.clone(),
             method,
             url,
             headers,

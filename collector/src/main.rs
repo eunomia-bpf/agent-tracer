@@ -59,6 +59,7 @@ async fn run_process_real(binary_extractor: &BinaryExtractor) -> Result<(), Runn
     
     let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
         .with_id("process".to_string())
+        .add_analyzer(Box::new(FileLogger::new("process.log").unwrap()))
         .add_analyzer(Box::new(OutputAnalyzer::new()));
     
     println!("Starting process event stream (press Ctrl+C to stop):");
@@ -159,6 +160,11 @@ async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Resul
     
     println!("Starting HTTPS traffic analysis (press Ctrl+C to stop):");
     let mut stream = ssl_runner.run().await?;
+    
+    // Consume the stream to actually process events
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
+    }
 
     Ok(())
 }
@@ -170,10 +176,16 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor) -> Result<(), RunnerErr
     
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
         .with_id("ssl-raw".to_string())
+        .add_analyzer(Box::new(FileLogger::new("ssl.log").unwrap()))
         .add_analyzer(Box::new(OutputAnalyzer::new()));
     
     println!("Starting SSL event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = ssl_runner.run().await?;
+    
+    // Consume the stream to actually process events
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
+    }
     
     Ok(())
 }
@@ -189,6 +201,11 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor) -> Result<(), Runne
     
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;
+
+    // Consume the stream to actually process events
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
+    }
 
     Ok(())
 }

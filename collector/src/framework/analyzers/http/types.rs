@@ -1,11 +1,9 @@
-use crate::framework::core::Event;
 use serde_json::Value;
 use std::collections::HashMap;
 
 /// Represents a pending HTTP request waiting for a response
 #[derive(Clone, Debug)]
 pub struct PendingRequest {
-    pub event: Event,
     pub method: String,
     pub url: String,
     pub headers: HashMap<String, String>,

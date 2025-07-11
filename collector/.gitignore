@@ -1,3 +1,6 @@
 target
 https.log
 test_integration.log
+res.txt
+process.log
+ssl.log

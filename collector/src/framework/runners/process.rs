@@ -40,17 +40,7 @@ impl ProcessRunner {
         self
     }
 
-    /// Set the process name filter
-    pub fn name_filter(mut self, name: String) -> Self {
-        self.config.name = Some(name);
-        self
-    }
 
-    /// Set the CPU threshold for filtering
-    pub fn cpu_threshold(mut self, threshold: f32) -> Self {
-        self.config.cpu_threshold = Some(threshold);
-        self
-    }
 
     /// Set the memory threshold for filtering
     #[allow(dead_code)]
@@ -119,14 +109,10 @@ mod tests {
     fn test_process_runner_with_custom_config() {
         let runner = ProcessRunner::from_binary_extractor("/fake/path/process")
             .with_id("test-process".to_string())
-            .pid(1234)
-            .name_filter("python".to_string())
-            .cpu_threshold(80.0);
+            .pid(1234);
 
         assert_eq!(runner.id(), "test-process");
         assert_eq!(runner.config.pid, Some(1234));
-        assert_eq!(runner.config.name, Some("python".to_string()));
-        assert_eq!(runner.config.cpu_threshold, Some(80.0));
     }
 
     /// Test that actually runs the real process binary
@@ -148,7 +134,7 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
         use tokio::time::{timeout, interval};
-        use tokio_stream::StreamExt;
+
         
         // Initialize debug logging for the test
         let _ = env_logger::Builder::from_default_env()
@@ -174,7 +160,6 @@ mod tests {
         // Create runner with real binary
         let mut runner = ProcessRunner::from_binary_extractor(binary_path)
             .with_id("real-binary-test".to_string())
-            .name_filter(".*".to_string()) // Match any process name
             .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new()));
         
         // Run the binary and collect events for 30 seconds
