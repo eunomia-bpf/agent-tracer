@@ -175,7 +175,7 @@ mod tests {
         let mut runner = ProcessRunner::from_binary_extractor(binary_path)
             .with_id("real-binary-test".to_string())
             .name_filter(".*".to_string()) // Match any process name
-            .add_analyzer(Box::new(crate::framework::analyzers::RawAnalyzer::new_with_options(false)));
+            .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new_with_options(true, false, false)));
         
         // Run the binary and collect events for 30 seconds
         match runner.run().await {

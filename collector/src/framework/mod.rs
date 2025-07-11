@@ -10,6 +10,6 @@ pub use core::Event;
 #[allow(unused_imports)]
 pub use runners::{Runner, SslRunner, ProcessRunner, FakeRunner, EventStream, RunnerError};
 #[allow(unused_imports)]
-pub use analyzers::{Analyzer, RawAnalyzer, OutputAnalyzer};
+pub use analyzers::{Analyzer, OutputAnalyzer};
 #[allow(unused_imports)]
 pub use binary_extractor::BinaryExtractor; 

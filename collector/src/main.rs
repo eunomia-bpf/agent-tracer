@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, RawAnalyzer, HttpAnalyzer, FileLogger}
+    analyzers::{OutputAnalyzer, HttpAnalyzer, FileLogger}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -218,7 +218,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor) -> Result<(), RunnerErr
     
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
         .with_id("ssl-raw".to_string())
-        .add_analyzer(Box::new(RawAnalyzer::new_with_options(true)));
+        .add_analyzer(Box::new(OutputAnalyzer::new_with_options(true, true, true)));
     
     println!("Starting SSL event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = ssl_runner.run().await?;
@@ -242,7 +242,7 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor) -> Result<(), Runne
     
     let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
         .with_id("process-raw".to_string())
-        .add_analyzer(Box::new(RawAnalyzer::new_with_options(true)));
+        .add_analyzer(Box::new(OutputAnalyzer::new_with_options(true, true, true)));
     
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;
