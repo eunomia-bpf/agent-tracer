@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use chrono::{DateTime, Utc};
 
 /// FileLogger analyzer that logs events to a specified file
 pub struct FileLogger {
@@ -83,6 +84,8 @@ impl FileLogger {
                 eprintln!("FileLogger: Failed to write to {}: {}", self.file_path, e);
             } else if let Err(e) = file.flush() {
                 eprintln!("FileLogger: Failed to flush {}: {}", self.file_path, e);
+            } else {
+                eprintln!("FileLogger: Successfully wrote event to {}", self.file_path);
             }
         } else {
             eprintln!("FileLogger: Failed to acquire file lock for {}", self.file_path);
@@ -115,17 +118,19 @@ impl FileLogger {
 impl Analyzer for FileLogger {
     async fn process(&mut self, mut stream: EventStream) -> Result<EventStream, AnalyzerError> {
         eprintln!("FileLogger: Starting to log events to '{}'", self.file_path);
+        eprintln!("FileLogger: Config - pretty_print: {}, log_all_events: {}", self.pretty_print, self.log_all_events);
         
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let file_handle = self.file_handle.clone();
         let file_path = self.file_path.clone();
-        let pretty_print = self.pretty_print;
         let log_all_events = self.log_all_events;
         
         // Process events and log them
         while let Some(event) = stream.next().await {
+            eprintln!("FileLogger: Processing event from source: {}", event.source);
+            
             // Log the event to file
             if log_all_events {
+                eprintln!("FileLogger: Logging all events - writing event to file");
                 self.log_event(&event);
             } else {
                 // Only log specific event types if not logging all
