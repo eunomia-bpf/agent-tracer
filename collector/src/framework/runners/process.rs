@@ -156,8 +156,30 @@ impl ProcessRunner {
 #[async_trait]
 impl Runner for ProcessRunner {
     async fn run(&mut self) -> Result<EventStream, RunnerError> {
-        let stream = self.executor.collect_events::<ProcessEventData>("process").await?;
-        AnalyzerProcessor::process_through_analyzers(stream, &mut self.analyzers).await
+        // Get raw JSON stream from the binary executor
+        let json_stream = self.executor.get_json_stream().await?;
+        
+        // Convert JSON values directly to framework Events
+        let event_stream = json_stream.map(|json_value| {
+            // Extract timestamp if available, otherwise use current time
+            let timestamp = json_value.get("timestamp")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                });
+            
+            Event::new_with_id_and_timestamp(
+                Uuid::new_v4().to_string(),
+                timestamp,
+                "process".to_string(), // source is runner name
+                json_value,
+            )
+        });
+        
+        AnalyzerProcessor::process_through_analyzers(Box::pin(event_stream), &mut self.analyzers).await
     }
 
     fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {

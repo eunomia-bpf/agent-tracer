@@ -1,60 +1,11 @@
 use super::{Runner, SslConfig, EventStream, RunnerError};
-use super::common::{BinaryExecutor, AnalyzerProcessor, IntoFrameworkEvent};
+use super::common::{BinaryExecutor, AnalyzerProcessor};
 use crate::framework::core::Event;
 use crate::framework::analyzers::Analyzer;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
-
-/// SSL event data structure from ssl binary (matches actual sslsniff output format)
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SslEventData {
-    #[serde(rename = "function")]
-    pub function_type: String, // "READ/RECV" or "WRITE/SEND"
-    pub time_s: f64,
-    pub timestamp_ns: u64,
-    pub comm: String,
-    pub pid: u32,
-    pub len: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_handshake: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated: Option<bool>,
-}
-
-impl IntoFrameworkEvent for SslEventData {
-    fn into_framework_event(self, source: &str) -> Event {
-        let mut data = serde_json::json!({
-            "pid": self.pid,
-            "comm": self.comm,
-            "function_type": self.function_type,
-            "time_s": self.time_s,
-            "len": self.len
-        });
-        
-        // Add optional fields if they exist
-        if let Some(is_handshake) = self.is_handshake {
-            data["is_handshake"] = serde_json::Value::Bool(is_handshake);
-        }
-        if let Some(ssl_data) = self.data {
-            data["data"] = serde_json::Value::String(ssl_data);
-        }
-        if let Some(truncated) = self.truncated {
-            data["truncated"] = serde_json::Value::Bool(truncated);
-        }
-        
-        Event::new_with_id_and_timestamp(
-            Uuid::new_v4().to_string(),
-            self.timestamp_ns,
-            source.to_string(),
-            self.function_type.clone(),
-            data,
-        )
-    }
-}
+use futures::stream::StreamExt;
 
 /// Runner for collecting SSL/TLS events
 pub struct SslRunner {
@@ -105,8 +56,30 @@ impl SslRunner {
 #[async_trait]
 impl Runner for SslRunner {
     async fn run(&mut self) -> Result<EventStream, RunnerError> {
-        let stream = self.executor.collect_events::<SslEventData>("ssl").await?;
-        AnalyzerProcessor::process_through_analyzers(stream, &mut self.analyzers).await
+        // Get raw JSON stream from the binary executor
+        let json_stream = self.executor.get_json_stream().await?;
+        
+        // Convert JSON values directly to framework Events
+        let event_stream = json_stream.map(|json_value| {
+            // Extract timestamp if available, otherwise use current time
+            let timestamp = json_value.get("timestamp_ns")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64
+                });
+            
+            Event::new_with_id_and_timestamp(
+                Uuid::new_v4().to_string(),
+                timestamp,
+                "ssl".to_string(), // source is runner name
+                json_value,
+            )
+        });
+        
+        AnalyzerProcessor::process_through_analyzers(Box::pin(event_stream), &mut self.analyzers).await
     }
 
     fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
@@ -126,7 +99,6 @@ impl Runner for SslRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_stream::StreamExt;
 
     #[test]
     fn test_ssl_runner_creation() {
@@ -148,62 +120,6 @@ mod tests {
         assert_eq!(runner.config.interface, Some("eth0".to_string()));
     }
 
-    #[test]
-    fn test_ssl_event_data_serialization() {
-        let ssl_data = SslEventData {
-            function_type: "READ/RECV".to_string(),
-            time_s: 123.456,
-            timestamp_ns: 1234567890,
-            comm: "test".to_string(),
-            pid: 1234,
-            len: 9,
-            is_handshake: Some(false),
-            data: Some("test data".to_string()),
-            truncated: Some(false),
-        };
-
-        let json = serde_json::to_string(&ssl_data).unwrap();
-        let deserialized: SslEventData = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(ssl_data.function_type, deserialized.function_type);
-        assert_eq!(ssl_data.time_s, deserialized.time_s);
-        assert_eq!(ssl_data.timestamp_ns, deserialized.timestamp_ns);
-        assert_eq!(ssl_data.comm, deserialized.comm);
-        assert_eq!(ssl_data.pid, deserialized.pid);
-        assert_eq!(ssl_data.len, deserialized.len);
-        assert_eq!(ssl_data.is_handshake, deserialized.is_handshake);
-        assert_eq!(ssl_data.data, deserialized.data);
-        assert_eq!(ssl_data.truncated, deserialized.truncated);
-    }
-
-    #[test]
-    fn test_ssl_event_into_framework_event() {
-        let ssl_data = SslEventData {
-            function_type: "ssl_read".to_string(),
-            time_s: 123.456,
-            timestamp_ns: 1234567890,
-            comm: "curl".to_string(),
-            pid: 1234,
-            len: 9,
-            is_handshake: Some(false),
-            data: Some("test data".to_string()),
-            truncated: Some(false),
-        };
-
-        let event = ssl_data.into_framework_event("ssl");
-        assert_eq!(event.source, "ssl");
-        assert_eq!(event.event_type, "ssl_read");
-        assert_eq!(event.timestamp, 1234567890);
-        assert!(event.data.get("pid").is_some());
-        assert!(event.data.get("comm").is_some());
-        assert!(event.data.get("function_type").is_some());
-        assert!(event.data.get("time_s").is_some());
-        assert!(event.data.get("len").is_some());
-        assert!(event.data.get("is_handshake").is_some());
-        assert!(event.data.get("data").is_some());
-        assert!(event.data.get("truncated").is_some());
-    }
-
     /// Test that actually runs the real SSL binary
     /// 
     /// This test is ignored by default and only runs when specifically requested.
@@ -223,6 +139,7 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
         use tokio::time::{timeout, interval};
+        use tokio_stream::StreamExt;
         
         // Initialize debug logging for the test
         let _ = env_logger::Builder::from_default_env()
