@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, RawAnalyzer, HttpAnalyzer}
+    analyzers::{OutputAnalyzer, RawAnalyzer, HttpAnalyzer, FileLogger}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -191,7 +191,8 @@ async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Resul
     
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
         .with_id("ssl-http".to_string())
-        .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(10000))) // 10 second wait time
+        .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(30000))) // 30 second wait time
+        .add_analyzer(Box::new(FileLogger::new_with_options("https.log", true, false).map_err(|e| Box::new(e) as RunnerError)?)) // Log to https.log
         .add_analyzer(Box::new(OutputAnalyzer::new_with_options(true, true, true))); // Pretty print JSON
     
     println!("Starting HTTPS traffic analysis (press Ctrl+C to stop):");
