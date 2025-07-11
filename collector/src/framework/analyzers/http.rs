@@ -483,6 +483,12 @@ impl Analyzer for HttpAnalyzer {
                     current_buffer.len(), pid);
                 self.thread_buffers.remove(&pid);
             }
+            
+            // Always forward the original SSL event to the next analyzer
+            eprintln!("HTTP Analyzer: Forwarding original SSL event");
+            if tx.send(event).is_err() {
+                break;
+            }
         }
 
         eprintln!("HTTP Analyzer: Stream processing completed");

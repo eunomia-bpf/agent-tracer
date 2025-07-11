@@ -8,7 +8,7 @@ pub mod binary_extractor;
 #[allow(unused_imports)]
 pub use core::Event;
 #[allow(unused_imports)]
-pub use runners::{Runner, SslRunner, ProcessRunner, EventStream, RunnerError};
+pub use runners::{Runner, SslRunner, ProcessRunner, FakeRunner, EventStream, RunnerError};
 #[allow(unused_imports)]
 pub use analyzers::{Analyzer, RawAnalyzer, OutputAnalyzer};
 #[allow(unused_imports)]

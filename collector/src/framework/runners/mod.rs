@@ -73,6 +73,8 @@ impl Default for ProcessConfig {
 pub mod common;
 pub mod ssl;
 pub mod process;
+pub mod fake; // Add fake runner for testing
 
 pub use ssl::SslRunner;
-pub use process::ProcessRunner; 
+pub use process::ProcessRunner;
+pub use fake::FakeRunner; // Export FakeRunner 

@@ -192,7 +192,7 @@ mod tests {
                 let result = timeout(Duration::from_secs(30), async {
                     loop {
                         tokio::select! {
-                            event_opt = stream.next() => {
+                            event_opt = futures::StreamExt::next(&mut stream) => {
                                 match event_opt {
                                     Some(event) => {
                                         event_count += 1;

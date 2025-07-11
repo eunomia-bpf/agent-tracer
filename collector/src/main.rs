@@ -149,30 +149,6 @@ async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Test framework with raw analyzer output
-async fn run_test_raw_real(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
-    println!("Testing Raw Analyzer Output");
-    println!("{}", "=".repeat(60));
-    
-    let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
-        .with_id("ssl-raw".to_string())
-        .add_analyzer(Box::new(RawAnalyzer::new_with_options(true)));
-    
-    println!("Starting SSL event stream with raw JSON output (press Ctrl+C to stop):");
-    let mut stream = ssl_runner.run().await?;
-    
-    let mut event_count = 0;
-    while let Some(_event) = stream.next().await {
-        event_count += 1;
-        if event_count % 10 == 0 {
-            eprintln!("Raw processed {} events so far...", event_count);
-        }
-    }
-    
-    println!("Raw analyzer completed with {} events", event_count);
-    Ok(())
-}
-
 /// Analyze HTTPS traffic and merge request/response pairs (renamed from run_http_ssl_real)
 async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
@@ -279,6 +255,6 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor) -> Result<(), Runne
         }
     }
     
-    println!("Raw process analyzer completed with {} events", event_count);
+    println!("Raw process events completed with {} events", event_count);
     Ok(())
 }
