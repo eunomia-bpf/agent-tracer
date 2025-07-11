@@ -28,24 +28,28 @@ impl FakeRunner {
     }
 
     /// Set custom event count (this will generate 2x events - request + response pairs)
+    #[allow(dead_code)]
     pub fn event_count(mut self, count: usize) -> Self {
         self.event_count = count;
         self
     }
     
     /// Set delay between events in milliseconds  
+    #[allow(dead_code)]
     pub fn delay_ms(mut self, delay: u64) -> Self {
         self.delay_ms = delay;
         self
     }
 
     /// Set a custom ID for this runner
+    #[allow(dead_code)]
     pub fn with_id(mut self, id: String) -> Self {
         self.id = id;
         self
     }
 
     /// Add an analyzer to the chain
+    #[allow(dead_code)]
     pub fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
         self.analyzers.push(analyzer);
         self
@@ -264,11 +268,12 @@ mod tests {
         println!("SSL events: {}", ssl_events);
         println!("HTTP pairs: {}", http_pairs);
         
-        // Should have original SSL events forwarded
-        assert!(ssl_events > 0, "Should have SSL events forwarded");
+        // Should have exactly 4 SSL events (2 pairs = 4 events)
+        assert_eq!(ssl_events, 4, "Should have exactly 4 SSL events (2 request/response pairs)");
         
-        // Should have HTTP pairs created
-        assert!(http_pairs > 0, "Should have HTTP request/response pairs");
+        // Should have HTTP pairs created (at least 1, up to 2)
+        assert!(http_pairs >= 1, "Should have at least 1 HTTP request/response pair");
+        assert!(http_pairs <= 2, "Should have at most 2 HTTP request/response pairs");
         
         // Show HTTP pairs for debugging
         for event in &events {
@@ -303,6 +308,9 @@ mod tests {
         println!("File Logger Test Results:");
         println!("Total events: {}", events.len());
         
+        // Should have exactly 4 events (2 pairs = 4 events)
+        assert_eq!(events.len(), 4, "Should have exactly 4 events (2 request/response pairs)");
+        
         // Check if log file was created
         assert!(std::path::Path::new(test_log_file).exists(), "Log file should be created");
         
@@ -314,7 +322,7 @@ mod tests {
         let log_contents = fs::read_to_string(test_log_file).unwrap();
         let log_lines: Vec<&str> = log_contents.lines().collect();
         println!("Log file lines: {}", log_lines.len());
-        assert!(log_lines.len() > 0, "Log file should have content");
+        assert_eq!(log_lines.len(), 4, "Log file should have exactly 4 lines (one per event)");
         
         // Clean up
         let _ = fs::remove_file(test_log_file);
@@ -323,6 +331,7 @@ mod tests {
     #[tokio::test]
     async fn test_http_analyzer_basic() {
         let mut runner = FakeRunner::new()
+            .event_count(3) // Explicitly set to 3 pairs for clear validation
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)));
 
         let stream = runner.run().await.unwrap();
@@ -334,8 +343,10 @@ mod tests {
             .filter(|e| e.source == "http_analyzer")
             .count();
             
-        assert!(ssl_events > 0, "Should have SSL events");
-        assert!(http_pairs > 0, "Should have HTTP pairs");
+        // Should have exactly 6 SSL events (3 pairs = 6 events)
+        assert_eq!(ssl_events, 6, "Should have exactly 6 SSL events (3 request/response pairs)");
+        assert!(http_pairs >= 1, "Should have at least 1 HTTP pair");
+        assert!(http_pairs <= 3, "Should have at most 3 HTTP pairs");
     }
 
 
@@ -366,8 +377,12 @@ mod tests {
         println!("Multiple Analyzer Instances Test Results:");
         println!("Total events: {}", events.len());
         
-        // Verify all events passed through multiple analyzers
-        assert!(events.len() > 0, "Should have events");
+        // Verify all events passed through multiple analyzers - should be 4 events (2 pairs) + HTTP analyzer events
+        assert!(events.len() >= 4, "Should have at least 4 SSL events (2 request/response pairs)");
+        
+        // Count SSL events specifically
+        let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
+        assert_eq!(ssl_events, 4, "Should have exactly 4 SSL events (2 request/response pairs)");
         
         // Both log files should exist
         assert!(std::path::Path::new(test_log_file1).exists(), "Log file 1 should exist");
@@ -545,8 +560,8 @@ mod tests {
         println!("Total events processed: {}", events.len());
         println!("Max events seen at once: {}", max_events_seen);
         
-        // Verify events were processed
-        assert!(events.len() >= 50, "Should have processed at least 50 events");
+        // Verify events were processed - should be exactly 50 events (25 pairs)
+        assert_eq!(events.len(), 50, "Should have processed exactly 50 events (25 request/response pairs)");
         
         // Verify memory tracking worked (cleanup occurred)
         assert!(max_events_seen < events.len(), "Memory cleanup should have occurred");

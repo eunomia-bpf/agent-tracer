@@ -70,9 +70,6 @@ async fn run_process_real(binary_extractor: &BinaryExtractor) -> Result<(), Runn
     while let Some(_event) = stream.next().await {
         event_count += 1;
         // OutputAnalyzer already prints the events, we just count them
-        if event_count % 10 == 0 {
-            eprintln!("Processed {} events so far...", event_count);
-        }
     }
     
     println!("Process Runner completed with {} events", event_count);
@@ -97,9 +94,6 @@ async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn
                     println!("SSL Runner started, processing events...");
                     while let Some(_event) = stream.next().await {
                         count += 1;
-                        if count % 5 == 0 {
-                            eprintln!("SSL: {} events processed", count);
-                        }
                     }
                     println!("SSL Runner completed with {} events", count);
                     count
@@ -125,9 +119,6 @@ async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn
                     println!("Process Runner started, processing events...");
                     while let Some(_event) = stream.next().await {
                         count += 1;
-                        if count % 5 == 0 {
-                            eprintln!("Process: {} events processed", count);
-                        }
                     }
                     println!("Process Runner completed with {} events", count);
                     count
