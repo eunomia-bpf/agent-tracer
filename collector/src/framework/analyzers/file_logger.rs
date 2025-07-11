@@ -1,14 +1,11 @@
 use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
-use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio_stream::wrappers::UnboundedReceiverStream;
-use chrono::Utc;
 
 /// FileLogger analyzer that logs events to a specified file
 pub struct FileLogger {
@@ -58,61 +55,54 @@ impl FileLogger {
             _ => data.to_string()
         }
     }
-
-    /// Log an event to the file as raw JSON
-    fn log_event(&self, event: &Event) {
-        if let Ok(mut file) = self.file_handle.lock() {
-            let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
-            
-            // Convert event to JSON, handling binary data in the "data" field
-            let event_json = match event.to_json() {
-                Ok(json_str) => {
-                    // Parse and fix data field if it contains binary
-                    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                        if let Some(data_obj) = parsed.get_mut("data") {
-                            if let Some(data_field) = data_obj.get_mut("data") {
-                                let data_str = Self::data_to_string(data_field);
-                                *data_field = serde_json::Value::String(data_str);
-                            }
-                        }
-                        serde_json::to_string(&parsed).unwrap_or(json_str)
-                    } else {
-                        json_str
-                    }
-                }
-                Err(e) => {
-                    format!("{{\"error\":\"Failed to serialize event: {}\"}}", e)
-                }
-            };
-            
-            let log_entry = format!("[{}] {}\n", timestamp, event_json);
-
-            if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                eprintln!("FileLogger: Failed to write to {}: {}", self.file_path, e);
-            } else if let Err(e) = file.flush() {
-                eprintln!("FileLogger: Failed to flush {}: {}", self.file_path, e);
-            }
-        }
-    }
 }
 
 #[async_trait]
 impl Analyzer for FileLogger {
-    async fn process(&mut self, mut stream: EventStream) -> Result<EventStream, AnalyzerError> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
+        let file_handle = Arc::clone(&self.file_handle);
+        let file_path = self.file_path.clone();
         
-        // Process events and log them
-        while let Some(event) = stream.next().await {
+        // Process events using map instead of consuming the stream
+        let processed_stream = stream.map(move |event| {
             // Log the event to file
-            self.log_event(&event);
-            
-            // Forward the event to the next analyzer
-            if tx.send(event).is_err() {
-                break;
-            }
-        }
+            if let Ok(mut file) = file_handle.lock() {
+                // Convert event to JSON, handling binary data in the "data" field
+                let event_json = match event.to_json() {
+                    Ok(json_str) => {
+                        // Parse and fix data field if it contains binary
+                        if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            if let Some(data_obj) = parsed.get_mut("data") {
+                                if let Some(data_field) = data_obj.get_mut("data") {
+                                    let data_str = Self::data_to_string(data_field);
+                                    *data_field = serde_json::Value::String(data_str);
+                                }
+                            }
+                            serde_json::to_string(&parsed).unwrap_or(json_str)
+                        } else {
+                            json_str
+                        }
+                    }
+                    Err(e) => {
+                        format!("{{\"error\":\"Failed to serialize event: {}\"}}", e)
+                    }
+                };
+                
+                // Write just the JSON without timestamp
+                let log_entry = format!("{}\n", event_json);
 
-        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
+                if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                    eprintln!("FileLogger: Failed to write to {}: {}", file_path, e);
+                } else if let Err(e) = file.flush() {
+                    eprintln!("FileLogger: Failed to flush {}: {}", file_path, e);
+                }
+            }
+            
+            // Pass the event through unchanged
+            event
+        });
+
+        Ok(Box::pin(processed_stream))
     }
 
     fn name(&self) -> &str {
@@ -123,6 +113,7 @@ impl Analyzer for FileLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::core::Event;
     use futures::stream;
     use serde_json::json;
     use tempfile::NamedTempFile;
