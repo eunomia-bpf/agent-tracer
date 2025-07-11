@@ -3,20 +3,17 @@ use crate::framework::runners::EventStream;
 use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
-use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 /// FileLogger analyzer that logs events to a specified file
 pub struct FileLogger {
     name: String,
     file_path: String,
-    pretty_print: bool,
-    log_all_events: bool,
     file_handle: Arc<Mutex<std::fs::File>>,
 }
 
@@ -32,81 +29,66 @@ impl FileLogger {
         Ok(Self {
             name: "FileLogger".to_string(),
             file_path: path_str,
-            pretty_print: true,
-            log_all_events: true,
             file_handle: Arc::new(Mutex::new(file)),
         })
     }
 
-    /// Create a new FileLogger with custom options
+    /// Create a new FileLogger with custom options (for backward compatibility)
     pub fn new_with_options<P: AsRef<Path>>(
         file_path: P,
-        pretty_print: bool,
-        log_all_events: bool,
+        _pretty_print: bool,  // Ignored - we always use raw JSON
+        _log_all_events: bool, // Ignored - we always log all events
     ) -> Result<Self, std::io::Error> {
-        let path_str = file_path.as_ref().to_string_lossy().to_string();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path_str)?;
-
-        Ok(Self {
-            name: "FileLogger".to_string(),
-            file_path: path_str,
-            pretty_print,
-            log_all_events,
-            file_handle: Arc::new(Mutex::new(file)),
-        })
+        Self::new(file_path)
     }
 
-    /// Log an event to the file
-    fn log_event(&self, event: &Event) {
-        if let Ok(mut file) = self.file_handle.lock() {
-            let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
-            
-            let json_str = if self.pretty_print {
-                serde_json::to_string_pretty(&event.data).unwrap_or_else(|_| "{}".to_string())
-            } else {
-                serde_json::to_string(&event.data).unwrap_or_else(|_| "{}".to_string())
-            };
-
-            let log_entry = format!(
-                "[{}] EVENT: source={}, id={}, timestamp={}\n{}\n{}\n",
-                timestamp,
-                event.source,
-                event.id,
-                event.timestamp,
-                json_str,
-                "=".repeat(80)
-            );
-
-            if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                eprintln!("FileLogger: Failed to write to {}: {}", self.file_path, e);
-            } else if let Err(e) = file.flush() {
-                eprintln!("FileLogger: Failed to flush {}: {}", self.file_path, e);
-            } else {
-                eprintln!("FileLogger: Successfully wrote event to {}", self.file_path);
+    /// Convert binary data to hex string
+    fn data_to_string(data: &serde_json::Value) -> String {
+        match data {
+            serde_json::Value::String(s) => {
+                // Check if string contains valid UTF-8
+                if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+                    s.clone()
+                } else {
+                    // Convert to hex if it contains control characters (likely binary)
+                    format!("HEX:{}", hex::encode(s.as_bytes()))
+                }
             }
-        } else {
-            eprintln!("FileLogger: Failed to acquire file lock for {}", self.file_path);
+            serde_json::Value::Null => "null".to_string(),
+            _ => data.to_string()
         }
     }
 
-    /// Log a formatted message with event details
-    fn log_summary(&self, event: &Event, message: &str) {
+    /// Log an event to the file as raw JSON
+    fn log_event(&self, event: &Event) {
         if let Ok(mut file) = self.file_handle.lock() {
-            let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
+            let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
             
-            let summary_entry = format!(
-                "[{}] SUMMARY: {} (source={}, id={})\n",
-                timestamp,
-                message,
-                event.source,
-                event.id
-            );
+            // Convert event to JSON, handling binary data in the "data" field
+            let event_json = match event.to_json() {
+                Ok(json_str) => {
+                    // Parse and fix data field if it contains binary
+                    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        if let Some(data_obj) = parsed.get_mut("data") {
+                            if let Some(data_field) = data_obj.get_mut("data") {
+                                let data_str = Self::data_to_string(data_field);
+                                *data_field = serde_json::Value::String(data_str);
+                            }
+                        }
+                        serde_json::to_string(&parsed).unwrap_or(json_str)
+                    } else {
+                        json_str
+                    }
+                }
+                Err(e) => {
+                    format!("{{\"error\":\"Failed to serialize event: {}\"}}", e)
+                }
+            };
+            
+            let log_entry = format!("[{}] {}\n", timestamp, event_json);
 
-            if let Err(e) = file.write_all(summary_entry.as_bytes()) {
-                eprintln!("FileLogger: Failed to write summary to {}: {}", self.file_path, e);
+            if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                eprintln!("FileLogger: Failed to write to {}: {}", self.file_path, e);
             } else if let Err(e) = file.flush() {
                 eprintln!("FileLogger: Failed to flush {}: {}", self.file_path, e);
             }
@@ -117,71 +99,12 @@ impl FileLogger {
 #[async_trait]
 impl Analyzer for FileLogger {
     async fn process(&mut self, mut stream: EventStream) -> Result<EventStream, AnalyzerError> {
-        eprintln!("FileLogger: Starting to log events to '{}'", self.file_path);
-        eprintln!("FileLogger: Config - pretty_print: {}, log_all_events: {}", self.pretty_print, self.log_all_events);
-        
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let file_path = self.file_path.clone();
-        let log_all_events = self.log_all_events;
         
         // Process events and log them
         while let Some(event) = stream.next().await {
-            eprintln!("FileLogger: Processing event from source: {}", event.source);
-            
             // Log the event to file
-            if log_all_events {
-                eprintln!("FileLogger: Logging all events - writing event to file");
-                self.log_event(&event);
-            } else {
-                // Only log specific event types if not logging all
-                match event.source.as_str() {
-                    "http_analyzer" => {
-                        if let Some(event_type) = event.data.get("type") {
-                            match event_type.as_str() {
-                                Some("http_request_response_pair") => {
-                                    self.log_event(&event);
-                                    let summary = format!(
-                                        "HTTP Pair: {} {} -> {} {}",
-                                        event.data["request"]["method"].as_str().unwrap_or("?"),
-                                        event.data["request"]["url"].as_str().unwrap_or("?"),
-                                        event.data["response"]["status_code"].as_u64().unwrap_or(0),
-                                        event.data["response"]["status_text"].as_str().unwrap_or("?")
-                                    );
-                                    self.log_summary(&event, &summary);
-                                }
-                                _ => {
-                                    // Log other HTTP analyzer events with summary only
-                                    let summary = format!("HTTP Event: {}", event_type.as_str().unwrap_or("unknown"));
-                                    self.log_summary(&event, &summary);
-                                }
-                            }
-                        }
-                    }
-                    "ssl" => {
-                        // For SSL events, log summary only unless log_all_events is true
-                        let data_preview = if let Some(data) = event.data.get("data") {
-                            match data {
-                                Value::String(s) => {
-                                    if s.len() > 50 { &s[..50] } else { s }
-                                }
-                                _ => "non-string data"
-                            }
-                        } else {
-                            "no data"
-                        };
-                        let summary = format!("SSL Event: {} bytes, data: {}", 
-                            event.data.get("len").and_then(|v| v.as_u64()).unwrap_or(0),
-                            data_preview
-                        );
-                        self.log_summary(&event, &summary);
-                    }
-                    _ => {
-                        // Log other events with basic summary
-                        let summary = format!("Event from source: {}", event.source);
-                        self.log_summary(&event, &summary);
-                    }
-                }
-            }
+            self.log_event(&event);
             
             // Forward the event to the next analyzer
             if tx.send(event).is_err() {
@@ -189,7 +112,6 @@ impl Analyzer for FileLogger {
             }
         }
 
-        eprintln!("FileLogger: Completed logging to '{}'", file_path);
         Ok(Box::pin(UnboundedReceiverStream::new(rx)))
     }
 
@@ -217,8 +139,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let logger = FileLogger::new_with_options(temp_file.path(), false, false).unwrap();
         assert_eq!(logger.name(), "FileLogger");
-        assert!(!logger.pretty_print);
-        assert!(!logger.log_all_events);
     }
 
     #[tokio::test]
@@ -246,59 +166,27 @@ mod tests {
         assert!(file_contents.contains("test event"));
     }
 
-    #[test]
-    fn test_file_writing_direct() {
-        use std::io::Write;
-        
+    #[tokio::test]
+    async fn test_file_logger_with_binary_data() {
         let temp_file = NamedTempFile::new().unwrap();
-        println!("Testing file writing to: {:?}", temp_file.path());
+        let mut logger = FileLogger::new(temp_file.path()).unwrap();
         
-        // Test 1: Direct file writing
-        {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(temp_file.path()).unwrap();
-            
-            writeln!(file, "Direct write test").unwrap();
-            file.flush().unwrap();
-            println!("Direct write completed");
-        }
+        // Create an event with binary data
+        let binary_data = String::from_utf8_lossy(&[0x00, 0x01, 0x02, 0xFF, 0xFE]).to_string();
+        let test_event = Event::new("ssl".to_string(), json!({
+            "data": binary_data,
+            "len": 5
+        }));
         
-        // Test 2: Arc<Mutex> file writing (like FileLogger)
-        {
-            let file_handle = Arc::new(Mutex::new(OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(temp_file.path()).unwrap()));
-            
-            if let Ok(mut file) = file_handle.lock() {
-                writeln!(file, "Mutex write test").unwrap();
-                file.flush().unwrap();
-                println!("Mutex write completed");
-            } else {
-                panic!("Failed to acquire mutex lock");
-            }
-        }
+        let events = vec![test_event];
+        let input_stream: EventStream = Box::pin(stream::iter(events));
+        let output_stream = logger.process(input_stream).await.unwrap();
         
-        // Test 3: FileLogger's log_event method
-        {
-            let logger = FileLogger::new(temp_file.path()).unwrap();
-            let test_event = Event::new("test".to_string(), json!({
-                "message": "log_event test",
-                "value": 123
-            }));
-            
-            logger.log_event(&test_event);
-            println!("log_event completed");
-        }
+        let collected: Vec<_> = output_stream.collect().await;
+        assert_eq!(collected.len(), 1);
         
-        // Verify all writes
+        // Check that file was written with hex encoding
         let file_contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        println!("File contents:\n{}", file_contents);
-        
-        assert!(file_contents.contains("Direct write test"));
-        assert!(file_contents.contains("Mutex write test"));
-        assert!(file_contents.contains("log_event test"));
+        assert!(file_contents.contains("HEX:"));
     }
 } 

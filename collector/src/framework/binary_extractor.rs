@@ -9,7 +9,7 @@ const PROCESS_BINARY: &[u8] = include_bytes!("../../../src/process");
 const SSLSNIFF_BINARY: &[u8] = include_bytes!("../../../src/sslsniff");
 
 pub struct BinaryExtractor {
-    pub temp_dir: TempDir,
+    _temp_dir: TempDir, // Keep alive to prevent cleanup
     pub process_path: PathBuf,
     pub sslsniff_path: PathBuf,
 }
@@ -35,7 +35,7 @@ impl BinaryExtractor {
         sleep(Duration::from_millis(100)).await;
         
         Ok(Self {
-            temp_dir,
+            _temp_dir: temp_dir,
             process_path,
             sslsniff_path,
         })

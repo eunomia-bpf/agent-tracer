@@ -20,6 +20,19 @@ impl HttpParser {
         data.trim_start().starts_with("HTTP/")
     }
 
+    /// Find the next UTF-8 character boundary from the given position
+    fn next_char_boundary(s: &str, mut pos: usize) -> usize {
+        if pos >= s.len() {
+            return s.len();
+        }
+        
+        // Move forward to find the next valid character boundary
+        while pos < s.len() && !s.is_char_boundary(pos) {
+            pos += 1;
+        }
+        pos
+    }
+
     /// Extract complete HTTP messages from a buffer
     pub fn extract_http_messages(buffer: &str) -> Vec<(String, usize)> {
         let mut messages = Vec::new();
@@ -27,11 +40,18 @@ impl HttpParser {
         let _buffer_bytes = buffer.as_bytes();
         
         while current_pos < buffer.len() {
+            // Ensure current_pos is at a valid UTF-8 character boundary
+            current_pos = Self::next_char_boundary(buffer, current_pos);
+            if current_pos >= buffer.len() {
+                break;
+            }
+            
             let remaining = &buffer[current_pos..];
             
             // Skip non-HTTP data
             if !Self::starts_with_http_request(remaining) && !Self::starts_with_http_response(remaining) {
-                current_pos += 1;
+                // Move to the next character boundary
+                current_pos = Self::next_char_boundary(buffer, current_pos + 1);
                 continue;
             }
             
@@ -84,7 +104,7 @@ impl HttpParser {
             if message_end <= remaining.len() {
                 let message = remaining[..message_end].to_string();
                 messages.push((message, current_pos + message_end));
-                current_pos += message_end;
+                current_pos = Self::next_char_boundary(buffer, current_pos + message_end);
             } else {
                 // Message not complete yet
                 break;

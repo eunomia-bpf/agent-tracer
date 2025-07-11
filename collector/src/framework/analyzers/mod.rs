@@ -26,11 +26,12 @@ pub use file_logger::FileLogger;
 #[cfg(test)]
 mod comprehensive_analyzer_chain_tests {
     use super::*;
-    use crate::framework::core::Event;
     use crate::framework::runners::{EventStream, FakeRunner, Runner};
-    use futures::stream::{self, StreamExt, TryStreamExt};
+    use futures::stream::StreamExt;
     use serde_json::json;
     use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::time::Instant;
+    use tokio::sync::Mutex;
     use tokio::time::Duration;
     use tempfile::NamedTempFile;
 
@@ -53,7 +54,7 @@ mod comprehensive_analyzer_chain_tests {
     impl Analyzer for ErrorSimulatorAnalyzer {
         async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
             let error_event = self.error_on_event_number;
-            let counter = &self.event_count;
+            let counter = Arc::new(AtomicUsize::new(0));
             
             let processed_stream = stream.map(move |event| {
                 let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
@@ -158,7 +159,7 @@ mod comprehensive_analyzer_chain_tests {
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
             .add_analyzer(Box::new(MetadataEnricherAnalyzer::new(json!({"test_run": "complex_chain", "version": "1.0"}))))
             .add_analyzer(Box::new(FileLogger::new(temp_file.path()).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -201,7 +202,7 @@ mod comprehensive_analyzer_chain_tests {
             .delay_ms(10)
             .add_analyzer(Box::new(ErrorSimulatorAnalyzer::new(3))) // Error on 3rd event
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -239,7 +240,7 @@ mod comprehensive_analyzer_chain_tests {
                     .event_count(3)
                     .delay_ms(5)
                     .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-                    .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+                    .add_analyzer(Box::new(OutputAnalyzer::new()));
 
                 let stream = runner.run().await.unwrap();
                 let events: Vec<_> = stream.collect().await;
@@ -287,14 +288,14 @@ mod comprehensive_analyzer_chain_tests {
         // Custom analyzer that records processing timestamps
         struct TimestampRecorderAnalyzer {
             timestamps: Arc<Mutex<Vec<(usize, Instant)>>>,
-            counter: AtomicUsize,
+            counter: Arc<AtomicUsize>,
         }
         
         impl TimestampRecorderAnalyzer {
             fn new(timestamps: Arc<Mutex<Vec<(usize, Instant)>>>) -> Self {
                 Self {
                     timestamps,
-                    counter: AtomicUsize::new(0),
+                    counter: Arc::new(AtomicUsize::new(0)),
                 }
             }
         }
@@ -303,7 +304,7 @@ mod comprehensive_analyzer_chain_tests {
         impl Analyzer for TimestampRecorderAnalyzer {
             async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
                 let timestamps = self.timestamps.clone();
-                let counter = &self.counter;
+                let counter = self.counter.clone();
                 
                 let recorded_stream = stream.map(move |event| {
                     let count = counter.fetch_add(1, Ordering::SeqCst);
@@ -333,7 +334,7 @@ mod comprehensive_analyzer_chain_tests {
             .event_count(5) // 10 events total
             .delay_ms(100) // 100ms delay to ensure streaming behavior is observable
             .add_analyzer(Box::new(TimestampRecorderAnalyzer::new(timestamps_clone)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let start_time = Instant::now();
         let stream = runner.run().await.unwrap();
@@ -407,7 +408,7 @@ mod comprehensive_analyzer_chain_tests {
             .event_count(3) // 6 events total
             .delay_ms(10) // Fast generation
             .add_analyzer(Box::new(SlowAnalyzer::new(50))) // Slow processing
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -486,7 +487,7 @@ mod comprehensive_analyzer_chain_tests {
                 .delay_ms(10)
                 .add_analyzer(Box::new(ResourceTrackingAnalyzer::new("test1".to_string(), Arc::clone(&resources))))
                 .add_analyzer(Box::new(ResourceTrackingAnalyzer::new("test2".to_string(), Arc::clone(&resources))))
-                .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+                .add_analyzer(Box::new(OutputAnalyzer::new()));
 
             let stream = runner.run().await.unwrap();
             let events: Vec<_> = stream.collect().await;

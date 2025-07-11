@@ -2,14 +2,10 @@ use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Output analyzer that provides real-time formatted event output
 pub struct OutputAnalyzer {
     name: String,
-    show_timestamps: bool,
-    show_runner_id: bool,
-    format_json: bool,
 }
 
 impl OutputAnalyzer {
@@ -17,45 +13,23 @@ impl OutputAnalyzer {
     pub fn new() -> Self {
         Self {
             name: "output".to_string(),
-            show_timestamps: true,
-            show_runner_id: true,
-            format_json: true,
         }
     }
 
-    /// Create a new OutputAnalyzer with custom formatting options
-    pub fn new_with_options(
-        show_timestamps: bool,
-        show_runner_id: bool,
-        format_json: bool,
-    ) -> Self {
-        Self {
-            name: "output".to_string(),
-            show_timestamps,
-            show_runner_id,
-            format_json,
-        }
-    }
-
-    /// Create a simple OutputAnalyzer that just prints raw JSON
-    pub fn new_simple() -> Self {
-        Self {
-            name: "output".to_string(),
-            show_timestamps: false,
-            show_runner_id: false,
-            format_json: false,
-        }
-    }
-
-    fn format_timestamp(timestamp: u64) -> String {
-        let datetime = SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(timestamp);
-        match datetime.duration_since(UNIX_EPOCH) {
-            Ok(duration) => {
-                let secs = duration.as_secs();
-                let micros = duration.subsec_micros();
-                format!("{}.{:06}", secs, micros)
+    /// Convert binary data to hex string
+    fn data_to_string(data: &serde_json::Value) -> String {
+        match data {
+            serde_json::Value::String(s) => {
+                // Check if string contains valid UTF-8
+                if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+                    s.clone()
+                } else {
+                    // Convert to hex if it contains control characters (likely binary)
+                    format!("HEX:{}", hex::encode(s.as_bytes()))
+                }
             }
-            Err(_) => timestamp.to_string(),
+            serde_json::Value::Null => "null".to_string(),
+            _ => data.to_string()
         }
     }
 }
@@ -69,50 +43,30 @@ impl Default for OutputAnalyzer {
 #[async_trait]
 impl Analyzer for OutputAnalyzer {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
-        let show_timestamps = self.show_timestamps;
-        let show_runner_id = self.show_runner_id;
-        let format_json = self.format_json;
-        
         let processed_stream = stream.map(move |event| {
-            // Build the output string
-            let mut output_parts = Vec::new();
-            
-            // Add timestamp if enabled
-            if show_timestamps {
-                let timestamp_str = Self::format_timestamp(event.timestamp);
-                output_parts.push(format!("[{}]", timestamp_str));
-            }
-            
-            // Add runner ID if enabled
-            if show_runner_id {
-                output_parts.push(format!("[{}]", event.source));
-            }
-            
-            // Format the main content
-            let content = if format_json {
-                match serde_json::to_string_pretty(&event.data) {
-                    Ok(json) => json,
-                    Err(e) => {
-                        eprintln!("Error formatting event JSON: {}", e);
-                        format!("{:?}", event.data)
+            // Convert event to JSON, handling binary data in the "data" field
+            let event_json = match event.to_json() {
+                Ok(json_str) => {
+                    // Parse and fix data field if it contains binary
+                    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        if let Some(data_obj) = parsed.get_mut("data") {
+                            if let Some(data_field) = data_obj.get_mut("data") {
+                                let data_str = Self::data_to_string(data_field);
+                                *data_field = serde_json::Value::String(data_str);
+                            }
+                        }
+                        serde_json::to_string(&parsed).unwrap_or(json_str)
+                    } else {
+                        json_str
                     }
                 }
-            } else {
-                match event.to_json() {
-                    Ok(json) => json,
-                    Err(e) => {
-                        eprintln!("Error serializing event to JSON: {}", e);
-                        format!("{:?}", event)
-                    }
+                Err(e) => {
+                    format!("{{\"error\":\"Failed to serialize event: {}\"}}", e)
                 }
             };
             
             // Print the formatted output immediately
-            if output_parts.is_empty() {
-                println!("{}", content);
-            } else {
-                println!("{} {}", output_parts.join(" "), content);
-            }
+            println!("{}", event_json);
             
             // Flush stdout immediately to ensure real-time output
             use std::io::{self, Write};
@@ -141,7 +95,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_analyzer_passthrough() {
-        let mut analyzer = OutputAnalyzer::new_simple(); // Simple format to avoid timestamp issues in tests
+        let mut analyzer = OutputAnalyzer::new(); // Simple format to avoid timestamp issues in tests
         
         let events = vec![
             Event::new("test-runner".to_string(), json!({"data": 1})),
@@ -162,5 +116,25 @@ mod tests {
     async fn test_output_analyzer_name() {
         let analyzer = OutputAnalyzer::new();
         assert_eq!(analyzer.name(), "output");
+    }
+
+    #[tokio::test]
+    async fn test_output_analyzer_with_binary_data() {
+        let mut analyzer = OutputAnalyzer::new();
+        
+        // Create an event with binary data
+        let binary_data = String::from_utf8_lossy(&[0x00, 0x01, 0x02, 0xFF, 0xFE]).to_string();
+        let test_event = Event::new("ssl".to_string(), json!({
+            "data": binary_data,
+            "len": 5
+        }));
+        
+        let events = vec![test_event];
+        let input_stream: EventStream = Box::pin(stream::iter(events));
+        let output_stream = analyzer.process(input_stream).await.unwrap();
+        
+        let collected: Vec<_> = output_stream.collect().await;
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].source, "ssl");
     }
 } 

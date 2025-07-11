@@ -168,7 +168,7 @@ mod tests {
             .with_id("real-ssl-test".to_string())
             .port(443) // Monitor HTTPS traffic
             .interface("any".to_string()) // Monitor all interfaces
-            .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new_with_options(true, false, false)));
+            .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new()));
         
         // Run the binary and collect events for 30 seconds
         match runner.run().await {

@@ -333,7 +333,7 @@ mod tests {
             .delay_ms(10)
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file, true, true).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false))); // Silent output
+            .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent output
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -380,7 +380,7 @@ mod tests {
             .delay_ms(10)
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file1, true, true).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         // Test chain: FileLogger -> HTTP -> Output
         let mut runner2 = FakeRunner::new()
@@ -389,7 +389,7 @@ mod tests {
             .delay_ms(10)
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file2, true, true).unwrap()))
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream1 = runner1.run().await.unwrap();
         let events1: Vec<_> = stream1.collect().await;
@@ -440,8 +440,8 @@ mod tests {
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file1, true, true).unwrap()))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file2, false, false).unwrap())) // Different settings
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, true, false))); // Different settings
+            .add_analyzer(Box::new(OutputAnalyzer::new()))
+            .add_analyzer(Box::new(OutputAnalyzer::new())); // Different settings
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -481,7 +481,7 @@ mod tests {
             .event_count(50) // 100 events total (50 pairs)
             .delay_ms(1) // Minimal delay for speed
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(10000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false))); // Silent
+            .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -516,7 +516,7 @@ mod tests {
             .event_count(0) // No events
             .delay_ms(10)
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -542,7 +542,7 @@ mod tests {
 
         // Add HTTP analyzer with very short timeout
         runner = runner.add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(100))); // 100ms timeout
-        runner = runner.add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+        runner = runner.add_analyzer(Box::new(OutputAnalyzer::new()));
 
         // Override the event generation to create only requests
         let event_stream = async_stream::stream! {
@@ -623,7 +623,7 @@ mod tests {
             .delay_ms(10);
 
         runner = runner.add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)));
-        runner = runner.add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+        runner = runner.add_analyzer(Box::new(OutputAnalyzer::new()));
 
         // Generate mixed source events
         let event_stream = async_stream::stream! {
@@ -734,7 +734,7 @@ mod tests {
             .event_count(25) // 50 events total
             .delay_ms(1)
             .add_analyzer(Box::new(memory_tracker))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false)));
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
@@ -790,7 +790,7 @@ mod tests {
             .delay_ms(25) // Realistic timing
             .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(10000))) // 10 second timeout
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file, true, true).unwrap()))
-            .add_analyzer(Box::new(OutputAnalyzer::new_with_options(false, false, false))); // Silent for test
+            .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent for test
 
         let start_time = Instant::now();
         let stream = runner.run().await.unwrap();
