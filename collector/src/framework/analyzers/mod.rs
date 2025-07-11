@@ -17,6 +17,8 @@ pub trait Analyzer: Send + Sync {
 
 pub mod raw;
 pub mod output;
+pub mod http;
 
 pub use raw::RawAnalyzer;
-pub use output::OutputAnalyzer; 
+pub use output::OutputAnalyzer;
+pub use http::HttpAnalyzer; 
