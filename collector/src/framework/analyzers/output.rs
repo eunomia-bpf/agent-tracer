@@ -88,9 +88,6 @@ impl Analyzer for OutputAnalyzer {
                 output_parts.push(format!("[{}]", event.source));
             }
             
-            // Add event type
-            output_parts.push(format!("[{}]", event.event_type));
-            
             // Format the main content
             let content = if format_json {
                 match serde_json::to_string_pretty(&event.data) {
@@ -147,8 +144,8 @@ mod tests {
         let mut analyzer = OutputAnalyzer::new_simple(); // Simple format to avoid timestamp issues in tests
         
         let events = vec![
-            Event::new("test-runner".to_string(), "event1".to_string(), json!({"data": 1})),
-            Event::new("test-runner".to_string(), "event2".to_string(), json!({"data": 2})),
+            Event::new("test-runner".to_string(), json!({"data": 1})),
+            Event::new("test-runner".to_string(), json!({"data": 2})),
         ];
         
         let input_stream: EventStream = Box::pin(stream::iter(events.clone()));

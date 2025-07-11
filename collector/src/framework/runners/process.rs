@@ -1,104 +1,11 @@
 use super::{Runner, ProcessConfig, EventStream, RunnerError};
-use super::common::{BinaryExecutor, AnalyzerProcessor, IntoFrameworkEvent};
+use super::common::{BinaryExecutor, AnalyzerProcessor};
 use crate::framework::core::Event;
 use crate::framework::analyzers::Analyzer;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize, Deserializer};
 use std::path::Path;
 use uuid::Uuid;
-
-fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::{self, Visitor, Unexpected};
-    use std::fmt;
-    
-    struct TimestampVisitor;
-    
-    impl<'de> Visitor<'de> for TimestampVisitor {
-        type Value = u64;
-        
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a timestamp as u64 or time string")
-        }
-        
-        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value)
-        }
-        
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            // Parse time string like "18:47:38" and convert to seconds since midnight
-            let parts: Vec<&str> = value.split(':').collect();
-            if parts.len() == 3 {
-                let hours: u64 = parts[0].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
-                let minutes: u64 = parts[1].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
-                let seconds: u64 = parts[2].parse().map_err(|_| de::Error::invalid_value(Unexpected::Str(value), &self))?;
-                
-                // Convert to seconds since midnight (simple conversion for now)
-                Ok(hours * 3600 + minutes * 60 + seconds)
-            } else {
-                Err(de::Error::invalid_value(Unexpected::Str(value), &self))
-            }
-        }
-    }
-    
-    deserializer.deserialize_any(TimestampVisitor)
-}
-
-/// Process event data structure from process binary (matches original ProcessEvent)
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ProcessEventData {
-    pub pid: u32,
-    pub ppid: u32,
-    pub comm: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
-    #[serde(deserialize_with = "deserialize_timestamp")]
-    pub timestamp: u64,
-    #[serde(rename = "event")]
-    pub event_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-}
-
-impl IntoFrameworkEvent for ProcessEventData {
-    fn into_framework_event(self, source: &str) -> Event {
-        let mut data = serde_json::json!({
-            "pid": self.pid,
-            "ppid": self.ppid,
-            "comm": self.comm,
-            "event_type": self.event_type
-        });
-        
-        // Add optional fields if they exist
-        if let Some(filename) = self.filename {
-            data["filename"] = serde_json::Value::String(filename);
-        }
-        if let Some(exit_code) = self.exit_code {
-            data["exit_code"] = serde_json::Value::Number(exit_code.into());
-        }
-        if let Some(duration_ms) = self.duration_ms {
-            data["duration_ms"] = serde_json::Value::Number(duration_ms.into());
-        }
-        
-        Event::new_with_id_and_timestamp(
-            Uuid::new_v4().to_string(),
-            self.timestamp,
-            source.to_string(),
-            self.event_type.clone(),
-            data,
-        )
-    }
-}
+use futures::stream::StreamExt;
 
 /// Runner for collecting process/system events
 pub struct ProcessRunner {
@@ -199,7 +106,6 @@ impl Runner for ProcessRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_stream::StreamExt;
 
     #[test]
     fn test_process_runner_creation() {
@@ -223,50 +129,6 @@ mod tests {
         assert_eq!(runner.config.cpu_threshold, Some(80.0));
     }
 
-    #[test]
-    fn test_process_event_data_serialization() {
-        let process_data = ProcessEventData {
-            pid: 1234,
-            ppid: 5678,
-            comm: "test".to_string(),
-            filename: Some("/test/path".to_string()),
-            timestamp: 1234567890,
-            event_type: "exec".to_string(),
-            exit_code: None,
-            duration_ms: None,
-        };
-
-        let json = serde_json::to_string(&process_data).unwrap();
-        let deserialized: ProcessEventData = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(process_data.pid, deserialized.pid);
-        assert_eq!(process_data.ppid, deserialized.ppid);
-        assert_eq!(process_data.comm, deserialized.comm);
-        assert_eq!(process_data.filename, deserialized.filename);
-        assert_eq!(process_data.event_type, deserialized.event_type);
-    }
-
-    #[test]
-    fn test_process_event_into_framework_event() {
-        let process_data = ProcessEventData {
-            pid: 1234,
-            ppid: 5678,
-            comm: "test".to_string(),
-            filename: Some("/test/path".to_string()),
-            timestamp: 1234567890,
-            event_type: "exec".to_string(),
-            exit_code: None,
-            duration_ms: None,
-        };
-
-        let event = process_data.into_framework_event("process");
-        assert_eq!(event.source, "process");
-        assert_eq!(event.event_type, "exec");
-        assert_eq!(event.timestamp, 1234567890);
-        assert!(event.data.get("pid").is_some());
-        assert!(event.data.get("comm").is_some());
-    }
-
     /// Test that actually runs the real process binary
     /// 
     /// This test is ignored by default and only runs when specifically requested.
@@ -286,6 +148,7 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
         use tokio::time::{timeout, interval};
+        use tokio_stream::StreamExt;
         
         // Initialize debug logging for the test
         let _ = env_logger::Builder::from_default_env()
