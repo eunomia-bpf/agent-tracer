@@ -175,20 +175,6 @@ async fn run_test_raw_real(binary_extractor: &BinaryExtractor) -> Result<(), Run
 
 /// Analyze HTTPS traffic and merge request/response pairs (renamed from run_http_ssl_real)
 async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
-    println!("HTTPS Request/Response Analyzer");
-    println!("{}", "=".repeat(60));
-    println!("This analyzer will:");
-    println!("  1. Capture SSL/TLS traffic using embedded sslsniff binary");
-    println!("  2. Parse HTTP requests and responses from the SSL data");
-    println!("  3. Match requests with their corresponding responses");
-    println!("  4. Output merged request/response pairs");
-    println!();
-    println!("Generate HTTPS traffic to see results:");
-    println!("  curl -s https://httpbin.org/get");
-    println!("  curl -s -X POST -d 'test=data' https://httpbin.org/post");
-    println!("  wget -q -O /dev/null https://example.com");
-    println!("{}", "=".repeat(60));
-    
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
         .with_id("ssl-http".to_string())
         .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(30000))) // 30 second wait time

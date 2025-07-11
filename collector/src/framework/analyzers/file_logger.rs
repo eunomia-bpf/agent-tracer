@@ -245,4 +245,60 @@ mod tests {
         let file_contents = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(file_contents.contains("test event"));
     }
+
+    #[test]
+    fn test_file_writing_direct() {
+        use std::io::Write;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        println!("Testing file writing to: {:?}", temp_file.path());
+        
+        // Test 1: Direct file writing
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(temp_file.path()).unwrap();
+            
+            writeln!(file, "Direct write test").unwrap();
+            file.flush().unwrap();
+            println!("Direct write completed");
+        }
+        
+        // Test 2: Arc<Mutex> file writing (like FileLogger)
+        {
+            let file_handle = Arc::new(Mutex::new(OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(temp_file.path()).unwrap()));
+            
+            if let Ok(mut file) = file_handle.lock() {
+                writeln!(file, "Mutex write test").unwrap();
+                file.flush().unwrap();
+                println!("Mutex write completed");
+            } else {
+                panic!("Failed to acquire mutex lock");
+            }
+        }
+        
+        // Test 3: FileLogger's log_event method
+        {
+            let logger = FileLogger::new(temp_file.path()).unwrap();
+            let test_event = Event::new("test".to_string(), json!({
+                "message": "log_event test",
+                "value": 123
+            }));
+            
+            logger.log_event(&test_event);
+            println!("log_event completed");
+        }
+        
+        // Verify all writes
+        let file_contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        println!("File contents:\n{}", file_contents);
+        
+        assert!(file_contents.contains("Direct write test"));
+        assert!(file_contents.contains("Mutex write test"));
+        assert!(file_contents.contains("log_event test"));
+    }
 } 

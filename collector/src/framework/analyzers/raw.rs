@@ -72,8 +72,8 @@ mod tests {
         let mut analyzer = RawAnalyzer::new_with_options(false); // Don't print to stdout in tests
         
         let events = vec![
-            Event::new("test".to_string(), "event1".to_string(), json!({"data": 1})),
-            Event::new("test".to_string(), "event2".to_string(), json!({"data": 2})),
+            Event::new("test".to_string(), json!({"data": 1})),
+            Event::new("test".to_string(), json!({"data": 2})),
         ];
         
         let input_stream: EventStream = Box::pin(stream::iter(events.clone()));
