@@ -68,25 +68,15 @@ const char argp_program_doc[] =
 	"    ./sslsniff -c curl      # sniff curl command only\n"
 	"    ./sslsniff --no-openssl # don't show OpenSSL calls\n"
 	"    ./sslsniff --no-gnutls  # don't show GnuTLS calls\n"
-	"    ./sslsniff --no-nss     # don't show NSS calls\n"
-	"    ./sslsniff --hexdump    # include data_hex field with hex data\n"
-	"    ./sslsniff -x           # include uid and tid fields\n"
-	"    ./sslsniff -l           # include latency_ms field\n"
-	"    ./sslsniff -l --handshake  # include handshake latency\n"
-	"    ./sslsniff --extra-lib openssl:/path/libssl.so.1.1 # sniff extra "
-	"library\n";
+	"    ./sslsniff --no-nss     # don't show NSS calls\n";
 
 struct env {
 	pid_t pid;
 	int uid;
-	bool extra;
 	char *comm;
 	bool openssl;
 	bool gnutls;
 	bool nss;
-	bool hexdump;
-	bool latency;
-	bool handshake;
 	char *extra_lib;
 } env = {
 	.uid = INVALID_UID,
@@ -97,23 +87,15 @@ struct env {
 	.comm = NULL,
 };
 
-#define HEXDUMP_KEY 1000
-#define HANDSHAKE_KEY 1002
 #define EXTRA_LIB_KEY 1003
 
 static const struct argp_option opts[] = {
 	{"pid", 'p', "PID", 0, "Sniff this PID only."},
 	{"uid", 'u', "UID", 0, "Sniff this UID only."},
-	{"extra", 'x', NULL, 0, "Show extra fields (UID, TID)"},
 	{"comm", 'c', "COMMAND", 0, "Sniff only commands matching string."},
 	{"no-openssl", 'o', NULL, 0, "Do not show OpenSSL calls."},
 	{"no-gnutls", 'g', NULL, 0, "Do not show GnuTLS calls."},
 	{"no-nss", 'n', NULL, 0, "Do not show NSS calls."},
-	{"hexdump", HEXDUMP_KEY, NULL, 0,
-	 "Show data as hexdump instead of trying to decode it as UTF-8"},
-	{"latency", 'l', NULL, 0, "Show function latency"},
-	{"handshake", HANDSHAKE_KEY, NULL, 0,
-	 "Show SSL handshake latency, enabled only if latency option is on."},
 	{"verbose", 'v', NULL, 0, "Verbose debug output"},
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help" },
 	{},
@@ -129,9 +111,6 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 	case 'u':
 		env.uid = atoi(arg);
 		break;
-	case 'x':
-		env.extra = true;
-		break;
 	case 'c':
 		env.comm = strdup(arg);
 		break;
@@ -144,17 +123,8 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 	case 'n':
 		env.nss = false;
 		break;
-	case 'l':
-		env.latency = true;
-		break;
 	case 'v':
 		verbose = true;
-		break;
-	case HEXDUMP_KEY:
-		env.hexdump = true;
-		break;
-	case HANDSHAKE_KEY:
-		env.handshake = true;
 		break;
 	case 'h':
 		argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
@@ -199,12 +169,10 @@ int attach_openssl(struct sslsniff_bpf *skel, const char *lib) {
 	ATTACH_UPROBE_CHECKED(skel, lib, SSL_read_ex, probe_SSL_read_ex_enter);
 	ATTACH_URETPROBE_CHECKED(skel, lib, SSL_read_ex, probe_SSL_read_ex_exit);
 
-	if (env.latency && env.handshake) {
-		ATTACH_UPROBE_CHECKED(skel, lib, SSL_do_handshake,
+	ATTACH_UPROBE_CHECKED(skel, lib, SSL_do_handshake,
 							probe_SSL_do_handshake_enter);
-		ATTACH_URETPROBE_CHECKED(skel, lib, SSL_do_handshake,
+	ATTACH_URETPROBE_CHECKED(skel, lib, SSL_do_handshake,
 								probe_SSL_do_handshake_exit);
-	}
 
 	return 0;
 }
@@ -268,24 +236,17 @@ char *find_library_path(const char *libname) {
 	return NULL;
 }
 
-// Global buffers allocated once and reused
+// Global buffer allocated once and reused
 static char *event_buf = NULL;
-static char *hex_buf = NULL;
-
-void buf_to_hex(const uint8_t *buf, size_t len, char *hex_str) {
-	for (size_t i = 0; i < len; i++) {
-		sprintf(hex_str + 2 * i, "%02x", buf[i]);
-	}
-}
 
 // Function to print the event from the perf buffer in JSON format
 void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	static unsigned long long start = 0;  // Use static to retain value across function calls
 	unsigned int buf_size;
 
-	// Safety check for global buffers
-	if (!event_buf || !hex_buf) {
-		fprintf(stderr, "Error: global buffers not allocated\n");
+	// Safety check for global buffer
+	if (!event_buf) {
+		fprintf(stderr, "Error: global buffer not allocated\n");
 		return;
 	}
 
@@ -325,72 +286,68 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	// Start JSON object
 	printf("{");
 	
-	// Basic fields
+	// Basic fields - always include all fields
 	printf("\"function\":\"%s\",", rw_event[event->rw]);
 	printf("\"time_s\":%.9f,", time_s);
 	printf("\"timestamp_ns\":%llu,", event->timestamp_ns);
 	printf("\"comm\":\"%s\",", event->comm);
 	printf("\"pid\":%d,", event->pid);
-	printf("\"len\":%d", event->len);
+	printf("\"len\":%d,", event->len);
 
-	// Extra fields if enabled
-	if (env.extra) {
-		printf(",\"uid\":%d,\"tid\":%d", event->uid, event->tid);
+	// Always include extra fields (UID, TID)
+	printf("\"uid\":%d,", event->uid);
+	printf("\"tid\":%d,", event->tid);
+
+	// Always include latency field
+	if (event->delta_ns) {
+		printf("\"latency_ms\":%.3f,", (double)event->delta_ns / 1000000);
+	} else {
+		printf("\"latency_ms\":0,");
 	}
 
-	// Latency field if enabled
-	if (env.latency && event->delta_ns) {
-		printf(",\"latency_ms\":%.3f", (double)event->delta_ns / 1000000);
-	}
+	// Always include handshake field
+	printf("\"is_handshake\":%s,", event->is_handshake ? "true" : "false");
 
-	// Handshake field
-	printf(",\"is_handshake\":%s", event->is_handshake ? "true" : "false");
-
-	// Data field
+	// Data field - always include both text and hex
 	if (buf_size > 0) {
-		if (env.hexdump) {
-			// Output as hex string using pre-allocated buffer
-			buf_to_hex((uint8_t *)event_buf, buf_size, hex_buf);
-			printf(",\"data_hex\":\"%s\"", hex_buf);
-		} else {
-			// Escape the buffer data for JSON with UTF-8 support
-			printf(",\"data\":\"");
-			for (unsigned int i = 0; i < buf_size; i++) {
-				unsigned char c = event_buf[i];
-				if (c == '"' || c == '\\') {
-					printf("\\%c", c);
-				} else if (c == '\n') {
-					printf("\\n");
-				} else if (c == '\r') {
-					printf("\\r");
-				} else if (c == '\t') {
-					printf("\\t");
-				} else if (c == '\b') {
-					printf("\\b");
-				} else if (c == '\f') {
-					printf("\\f");
-				} else if (c >= 32 && c <= 126) {
-					// ASCII printable characters
-					printf("%c", c);
-				} else if (c >= 128) {
-					// UTF-8 multi-byte sequence - pass through as-is
-					printf("%c", c);
-				} else {
-					// Control characters (0-31, 127)
-					printf("\\u%04x", c);
-				}
+		// Text data
+		printf("\"data\":\"");
+		for (unsigned int i = 0; i < buf_size; i++) {
+			unsigned char c = event_buf[i];
+			if (c == '"' || c == '\\') {
+				printf("\\%c", c);
+			} else if (c == '\n') {
+				printf("\\n");
+			} else if (c == '\r') {
+				printf("\\r");
+			} else if (c == '\t') {
+				printf("\\t");
+			} else if (c == '\b') {
+				printf("\\b");
+			} else if (c == '\f') {
+				printf("\\f");
+			} else if (c >= 32 && c <= 126) {
+				// ASCII printable characters
+				printf("%c", c);
+			} else if (c >= 128) {
+				// UTF-8 multi-byte sequence - pass through as-is
+				printf("%c", c);
+			} else {
+				// Control characters (0-31, 127)
+				printf("\\u%04x", c);
 			}
-			printf("\"");
 		}
+		printf("\",");
+		
 		
 		// Add truncated info if data was truncated
 		if (buf_size < event->len) {
-			printf(",\"truncated\":true,\"bytes_lost\":%d", event->len - buf_size);
+			printf("\"truncated\":true,\"bytes_lost\":%d", event->len - buf_size);
 		} else {
-			printf(",\"truncated\":false");
+			printf("\"truncated\":false");
 		}
 	} else {
-		printf(",\"data\":null,\"truncated\":false");
+		printf("\"data\":null,\"truncated\":false");
 	}
 
 	// Close JSON object
@@ -434,17 +391,10 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// Allocate global buffers once
+	// Allocate global buffer once
 	event_buf = malloc(MAX_BUF_SIZE + 1);
 	if (!event_buf) {
 		warn("failed to allocate event buffer\n");
-		err = -ENOMEM;
-		goto cleanup;
-	}
-
-	hex_buf = malloc(MAX_BUF_SIZE * 2 + 1);
-	if (!hex_buf) {
-		warn("failed to allocate hex buffer\n");
 		err = -ENOMEM;
 		goto cleanup;
 	}
@@ -509,10 +459,6 @@ cleanup:
 	if (event_buf) {
 		free(event_buf);
 		event_buf = NULL;
-	}
-	if (hex_buf) {
-		free(hex_buf);
-		hex_buf = NULL;
 	}
 	ring_buffer__free(rb);
 	sslsniff_bpf__destroy(obj);
