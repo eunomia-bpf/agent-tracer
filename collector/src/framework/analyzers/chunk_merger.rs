@@ -3,10 +3,12 @@ use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use chunked_transfer::Decoder;
 use futures::stream::StreamExt;
+use log::debug;
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
+use std::io::Write; // Add this for stdout flushing
 
 /// ChunkMerger analyzer that merges HTTP chunked transfer encoding fragments
 pub struct ChunkMerger {
@@ -35,22 +37,32 @@ impl ChunkMerger {
     /// Check if data contains HTTP chunked transfer encoding
     fn is_chunked_data(data: &str) -> bool {
         // Look for typical chunked patterns:
-        // - Hex digits followed by \r\n
-        // - Ends with 0\r\n\r\n
+        // 1. HTTP response with "Transfer-Encoding: chunked"
         if data.contains("Transfer-Encoding: chunked") {
+            println!("🔧 ChunkMerger: DEBUG - Found Transfer-Encoding: chunked header");
+            std::io::stdout().flush().unwrap();
             return true;
         }
         
-        // Check for chunk size pattern (hex number followed by \r\n)
+        // 2. Check for chunk size pattern (hex number followed by \r\n)
         let lines: Vec<&str> = data.split('\n').collect();
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.len() > 0 {
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_end_matches('\r');
+            if !trimmed.is_empty() {
                 // Try to parse as hex number
-                if let Ok(_) = u32::from_str_radix(trimmed.trim_end_matches('\r'), 16) {
+                if let Ok(size) = u32::from_str_radix(trimmed, 16) {
+                    println!("🔧 ChunkMerger: DEBUG - Found potential chunk size '{}' = {} at line {}", trimmed, size, i);
+                    std::io::stdout().flush().unwrap();
                     return true;
                 }
             }
+        }
+        
+        // 3. Check for SSE (Server-Sent Events) patterns which are often sent chunked
+        if data.contains("event:") && (data.contains("data:") || data.contains("id:")) {
+            println!("🔧 ChunkMerger: DEBUG - Found SSE pattern");
+            std::io::stdout().flush().unwrap();
+            return true;
         }
         
         false
@@ -60,6 +72,11 @@ impl ChunkMerger {
     fn extract_chunks(data: &str) -> Option<Vec<String>> {
         if !Self::is_chunked_data(data) {
             return None;
+        }
+
+        // If this is just SSE data without chunk headers, treat it as a single chunk
+        if data.contains("event:") && !data.contains("Transfer-Encoding: chunked") {
+            return Some(vec![data.to_string()]);
         }
 
         let mut chunks = Vec::new();
@@ -85,12 +102,15 @@ impl ChunkMerger {
         let mut chunks = Vec::new();
         let lines: Vec<&str> = data.split('\n').collect();
         let mut i = 0;
+        let mut found_chunk_header = false;
         
         while i < lines.len() {
             let line = lines[i].trim_end_matches('\r');
             
             // Try to parse as hex chunk size
             if let Ok(chunk_size) = u32::from_str_radix(line, 16) {
+                found_chunk_header = true;
+                
                 if chunk_size == 0 {
                     // End of chunks
                     break;
@@ -106,6 +126,11 @@ impl ChunkMerger {
                 }
             }
             i += 1;
+        }
+        
+        // If we didn't find any chunk headers, treat the entire data as a single chunk
+        if !found_chunk_header && !data.is_empty() {
+            chunks.push(data.to_string());
         }
         
         if chunks.is_empty() {
@@ -137,6 +162,9 @@ impl ChunkMerger {
 impl Analyzer for ChunkMerger {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
         let chunk_buffers = Arc::clone(&self.chunk_buffers);
+
+        println!("🔧 ChunkMerger: Processing stream STARTED");
+        std::io::stdout().flush().unwrap(); // Force flush
         
         let processed_stream = stream.filter_map(move |event| {
             let buffers = Arc::clone(&chunk_buffers);
@@ -158,10 +186,17 @@ impl Analyzer for ChunkMerger {
                     return Some(event);
                 }
 
+                println!("🔧 ChunkMerger: Found chunked data! Processing...");
+                std::io::stdout().flush().unwrap();
+
                 // Extract chunks from this event
                 let chunks = match Self::extract_chunks(data_str) {
                     Some(chunks) => chunks,
-                    None => return Some(event), // Return original if parsing fails
+                    None => {
+                        println!("🔧 ChunkMerger: Failed to extract chunks, returning original event");
+                        std::io::stdout().flush().unwrap();
+                        return Some(event);
+                    },
                 };
 
                 let connection_id = Self::generate_connection_id(&event);
@@ -175,10 +210,29 @@ impl Analyzer for ChunkMerger {
                     buffer.extend_from_slice(chunk.as_bytes());
                 }
 
-                // Check if we have a complete message (ends with 0\r\n\r\n or similar)
+                // Check if we have a complete message
                 let buffer_str = String::from_utf8_lossy(buffer);
-                if buffer_str.contains("0\r\n\r\n") || buffer_str.ends_with("0\r\n\r\n") || 
-                   (buffer_str.contains("0\r\n") && buffer_str.len() > 10) {
+                println!("🔧 ChunkMerger: Buffer size: {}", buffer.len());
+                std::io::stdout().flush().unwrap();
+                
+                // Improved completion conditions for SSE and chunked data
+                let is_complete = 
+                    // Traditional HTTP chunked ending
+                    buffer_str.contains("0\r\n\r\n") || 
+                    buffer_str.ends_with("0\r\n\r\n") ||
+                    // SSE completion patterns
+                    buffer_str.contains("event: message_stop") ||
+                    buffer_str.contains("event: done") ||
+                    buffer_str.contains("event: error") ||
+                    // Size-based completion - flush large buffers
+                    buffer.len() > 8192 ||
+                    // Time-based completion - if this looks like a complete SSE message
+                    (buffer_str.contains("event:") && buffer_str.contains("data:") && buffer.len() > 100);
+                
+                if is_complete {
+                    println!("🔧 ChunkMerger: Completion condition met! Buffer size: {}", buffer.len());
+                    std::io::stdout().flush().unwrap();
+                    
                     // Complete message, create merged event
                     let merged_data = buffer_str.to_string();
                     let final_buffer = buffer.clone();
@@ -200,17 +254,18 @@ impl Analyzer for ChunkMerger {
                         "tid": event.data.get("tid").unwrap_or(&json!(0)),
                         "timestamp_ns": event.data.get("timestamp_ns").unwrap_or(&json!(0))
                     });
-                    
+                    println!("🔧 ChunkMerger: Created merged event with {} bytes", final_buffer.len());
+                    std::io::stdout().flush().unwrap();
                     Some(merged_event)
                 } else {
-                    // print info qnd buffer
-                    println!("Incomplete message, buffer: {}", buffer_str);
                     // Incomplete message, don't emit event yet
                     None
                 }
             }
         });
 
+        println!("🔧 ChunkMerger: Returning processed stream");
+        std::io::stdout().flush().unwrap();
         Ok(Box::pin(processed_stream))
     }
 

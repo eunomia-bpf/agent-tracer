@@ -284,3 +284,156 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	return 0;
 }
 
+/* Helper function to check if PID should be tracked for file operations */
+static __always_inline bool should_trace_file_ops(pid_t pid)
+{
+	/* If tracing all processes, always trace */
+	if (trace_all_processes)
+		return true;
+
+	/* Check if this PID is being tracked */
+	struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
+	return (pid_info && pid_info->is_tracked);
+}
+
+/* Syscall tracepoint for openat */
+SEC("tp/syscalls/sys_enter_openat")
+int trace_openat(struct trace_event_raw_sys_enter *ctx)
+{
+	struct event *e;
+	pid_t pid;
+	char filepath[MAX_FILENAME_LEN];
+	int dfd, flags;
+	const char *filename;
+
+	pid = bpf_get_current_pid_tgid() >> 32;
+
+	/* Check if this PID should be traced */
+	if (!should_trace_file_ops(pid))
+		return 0;
+
+	/* Get syscall arguments */
+	dfd = (int)ctx->args[0];
+	filename = (const char *)ctx->args[1];
+	flags = (int)ctx->args[2];
+
+	/* Read filename from user space */
+	if (bpf_probe_read_user_str(filepath, sizeof(filepath), filename) < 0)
+		return 0;
+
+	/* Reserve sample from BPF ringbuf */
+	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+	if (!e)
+		return 0;
+
+	/* Fill out the event */
+	e->type = EVENT_TYPE_FILE_OPERATION;
+	e->pid = pid;
+	e->ppid = 0; /* Will be filled if needed */
+	e->exit_code = 0;
+	e->duration_ns = 0;
+	e->exit_event = false;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	
+	/* Copy filepath and set file operation details */
+	bpf_probe_read_kernel_str(e->file_op.filepath, sizeof(e->file_op.filepath), filepath);
+	e->file_op.fd = -1; /* Will be set on return if needed */
+	e->file_op.flags = flags;
+	e->file_op.is_open = true;
+
+	/* Submit to user-space */
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
+/* Syscall tracepoint for open */
+SEC("tp/syscalls/sys_enter_open")
+int trace_open(struct trace_event_raw_sys_enter *ctx)
+{
+	struct event *e;
+	pid_t pid;
+	char filepath[MAX_FILENAME_LEN];
+	int flags;
+	const char *filename;
+
+	pid = bpf_get_current_pid_tgid() >> 32;
+
+	/* Check if this PID should be traced */
+	if (!should_trace_file_ops(pid))
+		return 0;
+
+	/* Get syscall arguments */
+	filename = (const char *)ctx->args[0];
+	flags = (int)ctx->args[1];
+
+	/* Read filename from user space */
+	if (bpf_probe_read_user_str(filepath, sizeof(filepath), filename) < 0)
+		return 0;
+
+	/* Reserve sample from BPF ringbuf */
+	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+	if (!e)
+		return 0;
+
+	/* Fill out the event */
+	e->type = EVENT_TYPE_FILE_OPERATION;
+	e->pid = pid;
+	e->ppid = 0;
+	e->exit_code = 0;
+	e->duration_ns = 0;
+	e->exit_event = false;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	
+	/* Copy filepath and set file operation details */
+	bpf_probe_read_kernel_str(e->file_op.filepath, sizeof(e->file_op.filepath), filepath);
+	e->file_op.fd = -1;
+	e->file_op.flags = flags;
+	e->file_op.is_open = true;
+
+	/* Submit to user-space */
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
+/* Syscall tracepoint for close */
+SEC("tp/syscalls/sys_enter_close")
+int trace_close(struct trace_event_raw_sys_enter *ctx)
+{
+	struct event *e;
+	pid_t pid;
+	int fd;
+
+	pid = bpf_get_current_pid_tgid() >> 32;
+
+	/* Check if this PID should be traced */
+	if (!should_trace_file_ops(pid))
+		return 0;
+
+	/* Get file descriptor argument */
+	fd = (int)ctx->args[0];
+
+	/* Reserve sample from BPF ringbuf */
+	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+	if (!e)
+		return 0;
+
+	/* Fill out the event */
+	e->type = EVENT_TYPE_FILE_OPERATION;
+	e->pid = pid;
+	e->ppid = 0;
+	e->exit_code = 0;
+	e->duration_ns = 0;
+	e->exit_event = false;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	
+	/* Set file operation details for close */
+	e->file_op.filepath[0] = '\0'; /* No filepath for close */
+	e->file_op.fd = fd;
+	e->file_op.flags = 0;
+	e->file_op.is_open = false;
+
+	/* Submit to user-space */
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+

@@ -222,17 +222,46 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	printf("{");
 	printf("\"type\":\"event\",");
 	printf("\"timestamp\":\"%s\",", ts);
-	printf("\"event\":\"%s\",", e->exit_event ? "EXIT" : "EXEC");
-	printf("\"comm\":\"%s\",", e->comm);
-	printf("\"pid\":%d,", e->pid);
-	printf("\"ppid\":%d", e->ppid);
 	
-	if (e->exit_event) {
-		printf(",\"exit_code\":%u", e->exit_code);
-		if (e->duration_ns)
-			printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
-	} else {
-		printf(",\"filename\":\"%s\"", e->filename);
+	switch (e->type) {
+		case EVENT_TYPE_PROCESS:
+			printf("\"event\":\"%s\",", e->exit_event ? "EXIT" : "EXEC");
+			printf("\"comm\":\"%s\",", e->comm);
+			printf("\"pid\":%d,", e->pid);
+			printf("\"ppid\":%d", e->ppid);
+			
+			if (e->exit_event) {
+				printf(",\"exit_code\":%u", e->exit_code);
+				if (e->duration_ns)
+					printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
+			} else {
+				printf(",\"filename\":\"%s\"", e->filename);
+			}
+			break;
+			
+		case EVENT_TYPE_BASH_READLINE:
+			printf("\"event\":\"BASH_READLINE\",");
+			printf("\"comm\":\"%s\",", e->comm);
+			printf("\"pid\":%d,", e->pid);
+			printf("\"command\":\"%s\"", e->command);
+			break;
+			
+		case EVENT_TYPE_FILE_OPERATION:
+			printf("\"event\":\"%s\",", e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE");
+			printf("\"comm\":\"%s\",", e->comm);
+			printf("\"pid\":%d,", e->pid);
+			if (e->file_op.is_open) {
+				printf("\"filepath\":\"%s\",", e->file_op.filepath);
+				printf("\"flags\":%d", e->file_op.flags);
+			} else {
+				printf("\"fd\":%d", e->file_op.fd);
+			}
+			break;
+			
+		default:
+			printf("\"event\":\"UNKNOWN\",");
+			printf("\"event_type\":%d", e->type);
+			break;
 	}
 	
 	printf("}\n");

@@ -12,6 +12,7 @@
 enum event_type {
 	EVENT_TYPE_PROCESS = 0,
 	EVENT_TYPE_BASH_READLINE = 1,
+	EVENT_TYPE_FILE_OPERATION = 2,
 };
 
 struct event {
@@ -24,6 +25,12 @@ struct event {
 	union {
 		char filename[MAX_FILENAME_LEN];     /* for process events */
 		char command[MAX_COMMAND_LEN];       /* for bash readline events */
+		struct {                             /* for file operation events */
+			char filepath[MAX_FILENAME_LEN];
+			int fd;
+			int flags;
+			bool is_open;  /* true for open/openat, false for close */
+		} file_op;
 	};
 	bool exit_event;
 };
