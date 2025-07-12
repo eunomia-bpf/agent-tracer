@@ -203,6 +203,8 @@ impl Analyzer for ChunkMerger {
                     
                     Some(merged_event)
                 } else {
+                    // print info qnd buffer
+                    println!("Incomplete message, buffer: {}", buffer_str);
                     // Incomplete message, don't emit event yet
                     None
                 }
