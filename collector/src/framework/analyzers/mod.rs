@@ -16,12 +16,12 @@ pub trait Analyzer: Send + Sync {
 }
 
 pub mod output;
-pub mod http;
 pub mod file_logger;
+pub mod chunk_merger;
 
 pub use output::OutputAnalyzer;
-pub use http::HttpAnalyzer;
 pub use file_logger::FileLogger;
+pub use chunk_merger::ChunkMerger;
 
 #[cfg(test)]
 mod comprehensive_analyzer_chain_tests {
@@ -149,13 +149,13 @@ mod comprehensive_analyzer_chain_tests {
     async fn test_complex_analyzer_chain_composition() {
         let temp_file = NamedTempFile::new().unwrap();
         
-        // Create a complex chain: Filter -> HTTP -> Enrich -> FileLogger -> Output
+        // Create a complex chain: Filter -> ChunkMerger -> Enrich -> FileLogger -> Output
         let mut runner = FakeRunner::new()
             .with_id("complex-chain".to_string())
             .event_count(5) // 10 events total
             .delay_ms(10)
             .add_analyzer(Box::new(FilterAnalyzer::new("ssl_only".to_string())))
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)))
             .add_analyzer(Box::new(MetadataEnricherAnalyzer::new(json!({"test_run": "complex_chain", "version": "1.0"}))))
             .add_analyzer(Box::new(FileLogger::new(temp_file.path()).unwrap()))
             .add_analyzer(Box::new(OutputAnalyzer::new()));
@@ -170,7 +170,7 @@ mod comprehensive_analyzer_chain_tests {
         assert!(events.len() > 0, "Should have events");
         
         // All remaining events should be SSL (due to filter)
-        let non_ssl_events = events.iter().filter(|e| e.source != "ssl" && e.source != "http_analyzer").count();
+        let non_ssl_events = events.iter().filter(|e| e.source != "ssl" && e.source != "chunk_merger").count();
         assert_eq!(non_ssl_events, 0, "Filter should remove non-SSL events");
         
         // Events should have enriched metadata
@@ -179,11 +179,11 @@ mod comprehensive_analyzer_chain_tests {
             .count();
         assert!(enriched_events > 0, "Should have enriched events");
         
-        // Verify HTTP pairs were created
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer")
+        // Verify chunk merger events were created
+        let _chunk_events = events.iter()
+            .filter(|e| e.source == "chunk_merger")
             .count();
-        assert!(http_pairs > 0, "Should have HTTP pairs");
+        // Note: chunk_events might be 0 if no chunked data was processed
         
         // Verify file was written
         let file_size = std::fs::metadata(temp_file.path()).unwrap().len();
@@ -200,7 +200,7 @@ mod comprehensive_analyzer_chain_tests {
             .event_count(5)
             .delay_ms(10)
             .add_analyzer(Box::new(ErrorSimulatorAnalyzer::new(3))) // Error on 3rd event
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)))
             .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
@@ -238,7 +238,7 @@ mod comprehensive_analyzer_chain_tests {
                     .with_id(format!("concurrent-{}", i))
                     .event_count(3)
                     .delay_ms(5)
-                    .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
+                    .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)))
                     .add_analyzer(Box::new(OutputAnalyzer::new()));
 
                 let stream = runner.run().await.unwrap();

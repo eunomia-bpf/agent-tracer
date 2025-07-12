@@ -213,7 +213,7 @@ impl Runner for FakeRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::analyzers::{HttpAnalyzer, FileLogger, OutputAnalyzer, Analyzer};
+    use crate::framework::analyzers::{ChunkMerger, FileLogger, OutputAnalyzer, Analyzer};
     use futures::stream::StreamExt;
     use std::fs;
 
@@ -246,46 +246,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fake_runner_with_http_analyzer() {
+    async fn test_fake_runner_with_chunk_merger() {
         let mut runner = FakeRunner::new()
-            .with_id("test-http".to_string())
+            .with_id("test-chunk-merger".to_string())
             .event_count(2)
             .delay_ms(10)
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000))); // 5 second timeout
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000))); // 5 second timeout
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
         
-        println!("HTTP Analyzer Test Results:");
+        println!("Chunk Merger Test Results:");
         println!("Total events: {}", events.len());
         
         let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer" 
-                && e.data.get("type").and_then(|t| t.as_str()) == Some("http_request_response_pair"))
-            .count();
+        let chunk_events = events.iter().filter(|e| e.source == "chunk_merger").count();
             
         println!("SSL events: {}", ssl_events);
-        println!("HTTP pairs: {}", http_pairs);
+        println!("Chunk events: {}", chunk_events);
         
         // Should have exactly 4 SSL events (2 pairs = 4 events)
         assert_eq!(ssl_events, 4, "Should have exactly 4 SSL events (2 request/response pairs)");
         
-        // Should have HTTP pairs created (at least 1, up to 2)
-        assert!(http_pairs >= 1, "Should have at least 1 HTTP request/response pair");
-        assert!(http_pairs <= 2, "Should have at most 2 HTTP request/response pairs");
+        // Since fake events don't contain chunked data, ChunkMerger just passes them through
+        // So we expect 0 chunk_merger events and all original SSL events preserved
+        assert_eq!(chunk_events, 0, "Should have no chunk_merger events since fake data isn't chunked");
+        assert_eq!(events.len(), 4, "All original events should be preserved");
         
-        // Show HTTP pairs for debugging
+        // Verify all events are SSL events
         for event in &events {
-            if event.source == "http_analyzer" && 
-               event.data.get("type").and_then(|t| t.as_str()) == Some("http_request_response_pair") {
-                println!("HTTP Pair: {} {} -> {} {}", 
-                    event.data["request"]["method"].as_str().unwrap_or("?"),
-                    event.data["request"]["url"].as_str().unwrap_or("?"),
-                    event.data["response"]["status_code"].as_u64().unwrap_or(0),
-                    event.data["response"]["status_text"].as_str().unwrap_or("?")
-                );
-            }
+            assert_eq!(event.source, "ssl", "All events should have ssl source");
         }
     }
 
@@ -329,24 +319,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_http_analyzer_basic() {
+    async fn test_chunk_merger_basic() {
         let mut runner = FakeRunner::new()
             .event_count(3) // Explicitly set to 3 pairs for clear validation
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)));
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)));
 
         let stream = runner.run().await.unwrap();
         let events: Vec<_> = stream.collect().await;
         
-        // Should have SSL events and HTTP pairs
+        // Should have SSL events, but no chunk events since fake data isn't chunked
         let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer")
-            .count();
+        let chunk_events = events.iter().filter(|e| e.source == "chunk_merger").count();
             
         // Should have exactly 6 SSL events (3 pairs = 6 events)
         assert_eq!(ssl_events, 6, "Should have exactly 6 SSL events (3 request/response pairs)");
-        assert!(http_pairs >= 1, "Should have at least 1 HTTP pair");
-        assert!(http_pairs <= 3, "Should have at most 3 HTTP pairs");
+        assert_eq!(chunk_events, 0, "Should have no chunk_merger events since fake data isn't chunked");
+        assert_eq!(events.len(), 6, "All original events should be preserved");
     }
 
 
@@ -365,7 +353,7 @@ mod tests {
             .with_id("test-multi".to_string())
             .event_count(2)
             .delay_ms(10)
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file1, true, true).unwrap()))
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file2, false, false).unwrap())) // Different settings
             .add_analyzer(Box::new(OutputAnalyzer::new()))
@@ -412,7 +400,7 @@ mod tests {
             .with_id("test-empty".to_string())
             .event_count(0) // No events
             .delay_ms(10)
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)))
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)))
             .add_analyzer(Box::new(OutputAnalyzer::new()));
 
         let stream = runner.run().await.unwrap();
@@ -437,7 +425,7 @@ mod tests {
             .event_count(0) // Manual event generation
             .delay_ms(10);
 
-        runner = runner.add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(5000)));
+        runner = runner.add_analyzer(Box::new(ChunkMerger::new_with_timeout(5000)));
         runner = runner.add_analyzer(Box::new(OutputAnalyzer::new()));
 
         // Generate mixed source events
@@ -479,18 +467,18 @@ mod tests {
         let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
         let process_events = events.iter().filter(|e| e.source == "process").count();
         let custom_events = events.iter().filter(|e| e.source == "custom").count();
-        let http_pairs = events.iter().filter(|e| e.source == "http_analyzer").count();
+        let chunk_events = events.iter().filter(|e| e.source == "chunk_merger").count();
         
         println!("SSL events: {}", ssl_events);
         println!("Process events: {}", process_events);
         println!("Custom events: {}", custom_events);
-        println!("HTTP pairs: {}", http_pairs);
+        println!("Chunk events: {}", chunk_events);
         
         // Verify all events are preserved
         assert_eq!(ssl_events, 2, "Should have 2 SSL events");
         assert_eq!(process_events, 1, "Should have 1 process event");
         assert_eq!(custom_events, 1, "Should have 1 custom event");
-        assert!(http_pairs > 0, "Should have HTTP pairs from SSL events");
+        // Note: chunk_events might be 0 if no chunked data was processed
         
         println!("✅ Mixed event sources test completed!");
     }
@@ -603,7 +591,7 @@ mod tests {
             .with_id("integration-test".to_string())
             .event_count(10) // 20 events total
             .delay_ms(25) // Realistic timing
-            .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(10000))) // 10 second timeout
+            .add_analyzer(Box::new(ChunkMerger::new_with_timeout(10000))) // 10 second timeout
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file, true, true).unwrap()))
             .add_analyzer(Box::new(OutputAnalyzer::new())); // Silent for test
 
@@ -618,18 +606,15 @@ mod tests {
         
         // Analyze event distribution
         let ssl_events = events.iter().filter(|e| e.source == "ssl").count();
-        let http_pairs = events.iter()
-            .filter(|e| e.source == "http_analyzer" 
-                && e.data.get("type").and_then(|t| t.as_str()) == Some("http_request_response_pair"))
-            .count();
+        let chunk_events = events.iter().filter(|e| e.source == "chunk_merger").count();
         
         println!("SSL events: {}", ssl_events);
-        println!("HTTP pairs: {}", http_pairs);
+        println!("Chunk events: {}", chunk_events);
         
         // Verify expected behavior
         assert_eq!(ssl_events, 20, "Should have 20 SSL events (10 request/response pairs)");
-        assert!(http_pairs >= 5, "Should have created multiple HTTP pairs");
-        assert!(http_pairs <= 10, "Should not have more pairs than request/response pairs");
+        assert_eq!(chunk_events, 0, "Should have no chunk_merger events since fake data isn't chunked");
+        assert_eq!(events.len(), 20, "All original events should be preserved");
         
         // Verify file logging worked
         assert!(std::path::Path::new(test_log_file).exists(), "Log file should exist");
@@ -643,37 +628,13 @@ mod tests {
         println!("Processing rate: {:.2} events/second", events_per_second);
         assert!(events_per_second > 10.0, "Should process at least 10 events per second");
         
-        // Verify HTTP analyzer functionality with detailed checks
+        // Verify ChunkMerger functionality - since fake events don't contain chunked data,
+        // ChunkMerger should pass all events through unchanged
         for event in &events {
-            if event.source == "http_analyzer" && 
-               event.data.get("type").and_then(|t| t.as_str()) == Some("http_request_response_pair") {
-                
-                // Verify HTTP pair structure
-                assert!(event.data.get("request").is_some(), "HTTP pair should have request");
-                assert!(event.data.get("response").is_some(), "HTTP pair should have response");
-                assert!(event.data.get("duration_ms").is_some(), "HTTP pair should have duration");
-                assert!(event.data.get("thread_id").is_some(), "HTTP pair should have thread_id");
-                
-                let request = &event.data["request"];
-                let response = &event.data["response"];
-                
-                // Verify request structure
-                assert!(request.get("method").is_some(), "Request should have method");
-                assert!(request.get("url").is_some(), "Request should have URL");
-                assert!(request.get("headers").is_some(), "Request should have headers");
-                
-                // Verify response structure
-                assert!(response.get("status_code").is_some(), "Response should have status code");
-                assert!(response.get("status_text").is_some(), "Response should have status text");
-                assert!(response.get("headers").is_some(), "Response should have headers");
-                
-                println!("Validated HTTP pair: {} {} -> {} {}", 
-                    request["method"].as_str().unwrap_or("?"),
-                    request["url"].as_str().unwrap_or("?"),
-                    response["status_code"].as_u64().unwrap_or(0),
-                    response["status_text"].as_str().unwrap_or("?")
-                );
-            }
+            assert_eq!(event.source, "ssl", "All events should remain as SSL events");
+            assert!(event.data.get("data").is_some(), "Events should have data field");
+            assert!(event.data.get("pid").is_some(), "Events should have pid field");
+            assert!(event.data.get("function").is_some(), "Events should have function field");
         }
         
         println!("✅ Comprehensive analyzer chain integration test completed successfully!");

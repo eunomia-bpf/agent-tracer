@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, HttpAnalyzer, FileLogger}
+    analyzers::{OutputAnalyzer, FileLogger, ChunkMerger}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -22,7 +22,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyze HTTPS traffic and merge request/response pairs  
+    /// Analyze SSL traffic with automatic HTTP chunk merging
     Ssl,
     /// Test process runner with embedded binary
     Process,
@@ -141,15 +141,16 @@ async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Analyze HTTPS traffic and merge request/response pairs (renamed from run_http_ssl_real)
+/// Analyze SSL traffic with chunk merging as default
 async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
-        .with_id("ssl-http".to_string())
-        .add_analyzer(Box::new(HttpAnalyzer::new_with_wait_time(30000))) // 30 second wait time
-        .add_analyzer(Box::new(FileLogger::new_with_options("https.log", true, true).map_err(|e| Box::new(e) as RunnerError)?)) // Log ALL events to https.log
+        .with_id("ssl-default".to_string())
+        .add_analyzer(Box::new(ChunkMerger::new_with_timeout(30000))) // 30 second timeout for chunks
+        .add_analyzer(Box::new(FileLogger::new_with_options("ssl.log", true, true).map_err(|e| Box::new(e) as RunnerError)?)) // Log ALL events to ssl.log
         .add_analyzer(Box::new(OutputAnalyzer::new())); // Pretty print JSON
     
-    println!("Starting HTTPS traffic analysis (press Ctrl+C to stop):");
+    println!("Starting SSL traffic analysis with chunk merging (press Ctrl+C to stop):");
+    println!("Merging chunked transfer encoding fragments from SSL traffic...");
     let mut stream = ssl_runner.run().await?;
     
     // Consume the stream to actually process events
@@ -159,6 +160,8 @@ async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Resul
 
     Ok(())
 }
+
+
 
 /// Show raw SSL events as JSON (renamed from run_test_raw_real)
 async fn run_raw_ssl(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {

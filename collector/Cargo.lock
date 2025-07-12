@@ -194,6 +194,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "chunked_transfer"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
+
+[[package]]
 name = "clap"
 version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -240,6 +246,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "chrono",
+ "chunked_transfer",
  "clap",
  "env_logger",
  "futures",
