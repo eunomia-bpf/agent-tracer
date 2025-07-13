@@ -2,6 +2,7 @@ use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
+use log::debug;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -60,11 +61,13 @@ impl FileLogger {
 #[async_trait]
 impl Analyzer for FileLogger {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
+        
         let file_handle = Arc::clone(&self.file_handle);
         let file_path = self.file_path.clone();
         
         // Process events using map instead of consuming the stream
         let processed_stream = stream.map(move |event| {
+            debug!("FileLogger: Processing event: {:?}", event);
             // Log the event to file
             if let Ok(mut file) = file_handle.lock() {
                 // Convert event to JSON, handling binary data in the "data" field

@@ -2,6 +2,7 @@ use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
+use log::debug;
 
 /// Output analyzer that provides real-time formatted event output
 pub struct OutputAnalyzer {
@@ -44,6 +45,7 @@ impl Default for OutputAnalyzer {
 impl Analyzer for OutputAnalyzer {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
         let processed_stream = stream.map(move |event| {
+            debug!("OutputAnalyzer: Processing event: {:?}", event);
             // Convert event to JSON, handling binary data in the "data" field
             let event_json = match event.to_json() {
                 Ok(json_str) => {

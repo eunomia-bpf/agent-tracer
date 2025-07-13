@@ -13,6 +13,7 @@ pub struct ProcessRunner {
     config: ProcessConfig,
     analyzers: Vec<Box<dyn Analyzer>>,
     executor: BinaryExecutor,
+    additional_args: Vec<String>,
 }
 
 impl ProcessRunner {
@@ -24,6 +25,7 @@ impl ProcessRunner {
             config: ProcessConfig::default(),
             analyzers: Vec::new(),
             executor: BinaryExecutor::new(path_str),
+            additional_args: Vec::new(),
         }
     }
 
@@ -33,14 +35,24 @@ impl ProcessRunner {
         self
     }
 
+    /// Add additional command-line arguments to pass to the binary
+    pub fn with_args<I, S>(mut self, args: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.additional_args = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+        // Update the executor with the additional args
+        self.executor = self.executor.with_args(&self.additional_args);
+        self
+    }
+
     /// Set the PID to monitor
     #[allow(dead_code)]
     pub fn pid(mut self, pid: u32) -> Self {
         self.config.pid = Some(pid);
         self
     }
-
-
 
     /// Set the memory threshold for filtering
     #[allow(dead_code)]

@@ -15,11 +15,21 @@ pub type JsonStream = Pin<Box<dyn Stream<Item = serde_json::Value> + Send>>;
 /// Common binary executor for runners - now supports streaming
 pub struct BinaryExecutor {
     binary_path: String,
+    additional_args: Vec<String>,
 }
 
 impl BinaryExecutor {
     pub fn new(binary_path: String) -> Self {
-        Self { binary_path }
+        Self { 
+            binary_path,
+            additional_args: Vec::new(),
+        }
+    }
+
+    /// Add additional command-line arguments
+    pub fn with_args(mut self, args: &[String]) -> Self {
+        self.additional_args = args.to_vec();
+        self
     }
 
     /// Execute binary and get raw JSON stream
@@ -29,6 +39,12 @@ impl BinaryExecutor {
         let mut cmd = TokioCommand::new(&self.binary_path);
         cmd.stdout(Stdio::piped())
            .stderr(Stdio::piped());
+        
+        // Add additional arguments if any
+        if !self.additional_args.is_empty() {
+            cmd.args(&self.additional_args);
+            debug!("Added arguments: {:?}", self.additional_args);
+        }
         
         let mut child = cmd.spawn()
             .map_err(|e| Box::new(std::io::Error::new(

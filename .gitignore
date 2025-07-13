@@ -1,6 +1,9 @@
 .direnv
 /build
 ecapture
-src/res.txt
+res.txt
 save.log
 test_events.log
+ssl_analyzed.json
+__pycache__/
+ssl_timeline.json

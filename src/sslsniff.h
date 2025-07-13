@@ -6,7 +6,7 @@
 #ifndef __SSLSNIFF_H
 #define __SSLSNIFF_H
 
-#define MAX_BUF_SIZE (32 * 1024)  // 32KB eBPF buffer size (kernel limit)
+#define MAX_BUF_SIZE (512 * 1024)  // 512KB eBPF buffer size (kernel limit)
 #define RING_BUFFER_SIZE (2 * 1024 * 1024)  // 2MB ring buffer
 #define TASK_COMM_LEN 16
 

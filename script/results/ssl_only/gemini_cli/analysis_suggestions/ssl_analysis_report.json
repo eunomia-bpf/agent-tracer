@@ -1,0 +1,354 @@
+{
+  "analysis_metadata": {
+    "timestamp": "2025-07-13T22:11:40.468217",
+    "source_file": "/home/yunwei37/agent-tracer/script/analysis/ssl_timeline.json",
+    "analyzer_version": "1.0.0",
+    "focus": "HTTP headers and response metrics"
+  },
+  "summary": {
+    "total_requests": 38,
+    "total_responses": 5,
+    "unique_request_headers": 9,
+    "unique_response_headers": 11,
+    "sse_responses": 5,
+    "avg_response_time_ms": 0,
+    "total_data_transferred": 1783
+  },
+  "detailed_analysis": {
+    "request_headers": {
+      "total_requests": 38,
+      "unique_headers": 9,
+      "most_common_headers": {
+        "content-length": 28,
+        "host": 28,
+        "connection": 28,
+        "content-type": 12,
+        "user-agent": 12,
+        "authorization": 12,
+        "x-goog-api-client": 12,
+        "accept": 12,
+        "accept-encoding": 12
+      },
+      "methods": {
+        "POST": 28,
+        "**Dead": 1,
+        "y": 1,
+        "and": 1,
+        "distributed": 1,
+        "T\",\"tokenCount\":": 1,
+        "imes": 1,
+        "nstruction\\n\\n*": 1,
+        "": 1,
+        "ipulate": 1
+      },
+      "url_paths": {
+        "/log": 16,
+        "/v1internal:countTokens": 5,
+        "/v1internal:streamGenerateContent?alt=sse": 5,
+        "/v1internal:generateContent": 2,
+        "Letter": 1,
+        "on": 1,
+        "usability": 1,
+        "architecture": 1,
+        "28457}],\"candidatesTokensDetails\":": 1,
+        "harmful": 1,
+        "": 1,
+        "such": 1,
+        "the": 1,
+        "(e.g.,": 1
+      },
+      "hosts": {
+        "play.googleapis.com": 16,
+        "cloudcode-pa.googleapis.com": 12
+      },
+      "user_agents": {
+        "GeminiCLI/v20.16.0 (linux; x64) google-api-nodejs-client/9.15.1": 12
+      },
+      "content_types": {
+        "application/json": 12
+      },
+      "authorization_types": {
+        "Bearer": 12
+      },
+      "header_value_distribution": {
+        "content-type": {
+          "application/json": 12
+        },
+        "user-agent": {
+          "GeminiCLI/v20.16.0 (linux; x64) google-api-nodejs-client/9.15.1": 12
+        },
+        "x-goog-api-client": {
+          "gl-node/20.16.0": 12
+        },
+        "accept": {
+          "application/json": 7,
+          "*/*": 5
+        },
+        "content-length": {
+          "407": 5,
+          "725": 3,
+          "722": 2,
+          "556": 2,
+          "17414": 1,
+          "562": 1,
+          "121708": 1,
+          "589": 1,
+          "96876": 1,
+          "129890": 1
+        },
+        "accept-encoding": {
+          "gzip,deflate": 12
+        },
+        "host": {
+          "play.googleapis.com": 16,
+          "cloudcode-pa.googleapis.com": 12
+        },
+        "connection": {
+          "keep-alive": 28
+        }
+      }
+    },
+    "response_headers": {
+      "total_responses": 5,
+      "unique_headers": 11,
+      "most_common_headers": {
+        "content-type": 5,
+        "content-disposition": 5,
+        "vary": 5,
+        "transfer-encoding": 5,
+        "date": 5,
+        "server": 5,
+        "x-xss-protection": 5,
+        "x-frame-options": 5,
+        "x-content-type-options": 5,
+        "server-timing": 5,
+        "alt-svc": 5
+      },
+      "status_codes": {
+        "200": 5
+      },
+      "content_types": {
+        "text/event-stream": 5
+      },
+      "server_types": {
+        "ESF": 5
+      },
+      "encoding_types": {},
+      "cache_headers": {},
+      "security_headers": {
+        "x-xss-protection": 5,
+        "x-frame-options": 5,
+        "x-content-type-options": 5
+      },
+      "content_length_stats": {},
+      "header_value_distribution": {
+        "content-type": {
+          "text/event-stream": 5
+        },
+        "content-disposition": {
+          "attachment": 5
+        },
+        "vary": {
+          "Referer": 5
+        },
+        "transfer-encoding": {
+          "chunked": 5
+        },
+        "date": {
+          "Sun, 13 Jul 2025 22:04:49 GMT": 1,
+          "Sun, 13 Jul 2025 22:05:32 GMT": 1,
+          "Sun, 13 Jul 2025 22:09:46 GMT": 1,
+          "Sun, 13 Jul 2025 22:10:01 GMT": 1,
+          "Sun, 13 Jul 2025 22:10:24 GMT": 1
+        },
+        "server": {
+          "ESF": 5
+        },
+        "x-xss-protection": {
+          "0": 5
+        },
+        "x-frame-options": {
+          "SAMEORIGIN": 5
+        },
+        "x-content-type-options": {
+          "nosniff": 5
+        },
+        "server-timing": {
+          "gfet4t7; dur=1977": 1,
+          "gfet4t7; dur=2233": 1,
+          "gfet4t7; dur=3466": 1,
+          "gfet4t7; dur=2825": 1,
+          "gfet4t7; dur=2880": 1
+        },
+        "alt-svc": {
+          "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000": 5
+        }
+      }
+    },
+    "response_metrics": {
+      "total_request_response_pairs": 1,
+      "successful_correlations": 1,
+      "status_code_distribution": {
+        "200": 1
+      }
+    },
+    "communication_patterns": {
+      "request_methods": {
+        "POST": 28,
+        "**Dead": 1,
+        "y": 1,
+        "and": 1,
+        "distributed": 1,
+        "T\",\"tokenCount\":": 1,
+        "imes": 1,
+        "nstruction\\n\\n*": 1,
+        "": 1,
+        "ipulate": 1
+      },
+      "protocols": {
+        "HTTP/1.1": 28,
+        "Queue:**": 1,
+        "other": 1,
+        "of": 1,
+        "to": 1,
+        "[{\"modality\":": 1,
+        "consequences.": 1,
+        "": 1,
+        "as": 1,
+        "agent's": 1,
+        "Prometheus,": 1
+      },
+      "top_paths": {
+        "/log": 16,
+        "/v1internal:countTokens": 5,
+        "/v1internal:streamGenerateContent": 5,
+        "/v1internal:generateContent": 2,
+        "Letter": 1,
+        "on": 1,
+        "usability": 1,
+        "architecture": 1,
+        "28457}],\"candidatesTokensDetails\":": 1,
+        "harmful": 1,
+        "": 1,
+        "such": 1,
+        "the": 1,
+        "(e.g.,": 1
+      },
+      "response_content_types": {
+        "text/event-stream": 5
+      },
+      "sse_responses": 5,
+      "communication_summary": {
+        "unique_methods": 11,
+        "unique_protocols": 11,
+        "unique_paths": 14,
+        "unique_content_types": 1
+      }
+    },
+    "content_analysis": {
+      "request_content": {
+        "requests_with_body": 28,
+        "json_requests": 28,
+        "form_requests": 0,
+        "total_request_size": 1616837
+      },
+      "response_content": {
+        "responses_with_body": 5,
+        "json_responses": 0,
+        "html_responses": 0,
+        "sse_responses": 5,
+        "total_response_size": 1783
+      }
+    },
+    "endpoint_patterns": {
+      "total_unique_endpoints": 1,
+      "most_active_endpoints": [
+        [
+          "/v1internal:generateContent",
+          {
+            "request_count": 1,
+            "methods": {
+              "POST": 1
+            },
+            "status_codes": {
+              "200": 1
+            },
+            "avg_response_time_ms": 0,
+            "max_response_time_ms": 0,
+            "min_response_time_ms": 0,
+            "unique_request_headers": 9,
+            "unique_response_headers": 11,
+            "most_common_request_headers": {
+              "content-type": 1,
+              "user-agent": 1,
+              "authorization": 1,
+              "x-goog-api-client": 1,
+              "accept": 1,
+              "content-length": 1,
+              "accept-encoding": 1,
+              "host": 1,
+              "connection": 1
+            },
+            "most_common_response_headers": {
+              "content-type": 1,
+              "content-disposition": 1,
+              "vary": 1,
+              "transfer-encoding": 1,
+              "date": 1,
+              "server": 1,
+              "x-xss-protection": 1,
+              "x-frame-options": 1,
+              "x-content-type-options": 1,
+              "server-timing": 1
+            },
+            "hosts": {
+              "cloudcode-pa.googleapis.com": 1
+            }
+          }
+        ]
+      ],
+      "endpoint_details": {
+        "/v1internal:generateContent": {
+          "request_count": 1,
+          "methods": {
+            "POST": 1
+          },
+          "status_codes": {
+            "200": 1
+          },
+          "avg_response_time_ms": 0,
+          "max_response_time_ms": 0,
+          "min_response_time_ms": 0,
+          "unique_request_headers": 9,
+          "unique_response_headers": 11,
+          "most_common_request_headers": {
+            "content-type": 1,
+            "user-agent": 1,
+            "authorization": 1,
+            "x-goog-api-client": 1,
+            "accept": 1,
+            "content-length": 1,
+            "accept-encoding": 1,
+            "host": 1,
+            "connection": 1
+          },
+          "most_common_response_headers": {
+            "content-type": 1,
+            "content-disposition": 1,
+            "vary": 1,
+            "transfer-encoding": 1,
+            "date": 1,
+            "server": 1,
+            "x-xss-protection": 1,
+            "x-frame-options": 1,
+            "x-content-type-options": 1,
+            "server-timing": 1
+          },
+          "hosts": {
+            "cloudcode-pa.googleapis.com": 1
+          }
+        }
+      }
+    }
+  }
+}

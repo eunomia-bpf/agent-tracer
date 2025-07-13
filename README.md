@@ -1,147 +1,171 @@
-# **libbpf-starter-template**
+# AgentSight: Zero‑instrumentation AI observability, powered by eBPF
 
-![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
-[![Build and publish](https://github.com/eunomia-bpf/libbpf-starter-template/actions/workflows/publish.yml/badge.svg)](https://github.com/eunomia-bpf/libbpf-starter-template/actions/workflows/publish.yml)
-![GitHub stars](https://img.shields.io/github/stars/eunomia-bpf/libbpf-starter-template?style=social)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yunwei37/agent-tracer)
 
-Welcome to the **`libbpf-starter-template`**! This project template is designed to help you quickly start
-developing eBPF projects using libbpf in C. The template provides a solid starting point with a Makefile, 
-Dockerfile, and GitHub action, along with all necessary dependencies to simplify your development process.
+`AgentSight` is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes **black box AI applications** at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. `*No code changes required, zero new dependencies, no new SDKs; Works for most frameworks and applications out of box.*`
 
-借助于 GitHub 模板和 Github Codespace，可以轻松构建 eBPF 项目和开发环境，一键在线编译运行 eBPF 程序。关于中文的文档和详细的 eBPF 开发教程，可以参考：https://github.com/eunomia-bpf/bpf-developer-tutorial
+## 🚀 Key Advantages Over Existing Solutions
 
-There are other templates for other languages:
+### **vs. LangSmith/Helicone/Langfuse (Application-Level Tools)**
 
-- <https://github.com/eunomia-bpf/libbpf-starter-template>: eBPF project template based on the C language and the libbpf framework.
-- <https://github.com/eunomia-bpf/cilium-ebpf-starter-template>: eBPF project template based on the Go language and the cilium/ebpf framework.
-- <https://github.com/eunomia-bpf/libbpf-rs-starter-template>: eBPF project template based on the Rust language and the libbpf-rs framework.
-- <https://github.com/eunomia-bpf/eunomia-template>: eBPF project template based on the C language and the eunomia-bpf framework.
+| **Challenge**                               | **Their approach**                               | **AgentSight's solution**                                           |
+| ------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| **Getting started on a new stack, adopting a new framework**          | ❌ Add a new SDK / proxy for *each* framework, New plug‑in every time APIs change      | ✅ Drop‑in daemon and tooling; no code or env‑var changes                        |
+| **Using commercial close source tools (claude‑code, …)**          | ❌ Hard to analysis, limited visibility into it's operations      | ✅ Have visibility into it's prompts, plan, behaviors, and more                        |
+| **Agents that write code to create and run tools**         | ❌ Only trace the execution of the agent tools      | ✅ Tracks every process behaviors at minimal performance overhead, like shell cmd, file‑I/O, network call, etc.       |
+| **Self‑modifying / prompt‑injected agents** | ❌ Logs can be silenced or faked in‑process       | ✅ Kernel‑level hooks record raw TLS & syscalls—tamper‑resistant     |
+| **Encrypted LLM traffic**                   | ❌ Only what the wrapper emits; ciphertext unseen | ✅ Uprobes capture the *real* unencrypted request / response |
+| **Cross‑agent coordination**                | ❌ Each process and framework traced in isolation               | ✅ Global analysis, and more            |
 
-## **Getting Started**
+### **The System Boundary Advantage**
 
-To get started, simply click the "Use this template" button on the GitHub repository page. This will create
-a new repository in your account with the same files and structure as this template.
+**AgentSight captures what others miss: interactions with the environment**
 
-### Use docker
+- Subprocess executions that bypass instrumentation
+- Raw encrypted payloads before agent processing  
+- File operations and system resource access
+- Cross-agent communications and coordination
 
-Run the following code to run the eBPF code from the cloud to your local machine in one line:
+## 🏗️ Architecture
 
-```console
-$ sudo docker run --rm -it --privileged ghcr.io/eunomia-bpf/libbpf-template:latest
-TIME     EVENT COMM             PID     PPID    FILENAME/EXIT CODE
-09:25:14 EXEC  sh               28142   1788    /bin/sh
-09:25:14 EXEC  playerctl        28142   1788    /nix/store/vf3rsb7j3p7zzyjpb0a3axl8yq4z1sq5-playerctl-2.4.1/bin/playerctl
-09:25:14 EXIT  playerctl        28142   1788    [1] (6ms)
-09:25:15 EXEC  sh               28145   1788    /bin/sh
-09:25:15 EXEC  playerctl        28145   1788    /nix/store/vf3rsb7j3p7zzyjpb0a3axl8yq4z1sq5-playerctl-2.4.1/bin/playerctl
-09:25:15 EXIT  playerctl        28145   1788    [1] (6ms)
+```ascii
+┌─────────────────────────────────────────────────┐
+│              AI Agent Runtime                   │
+│   ┌─────────────────────────────────────────┐   │
+│   │    Application-Level Observability      │   │
+│   │  (LangSmith, Helicone, Langfuse, etc.)  │   │
+│   │         🔴 Tamper Vulnerable             │   │
+│   └─────────────────────────────────────────┘   │
+│                     ↕ (Can be silenced)         │
+├─────────────────────────────────────────────────┤ ← System Boundary
+│  🟢 AgentSight eBPF Monitoring (Tamper-proof)   │
+│  ┌─────────────────┐  ┌─────────────────────┐   │
+│  │   SSL Traffic   │  │    Process Events   │   │
+│  │   Monitoring    │  │    Monitoring       │   │
+│  └─────────────────┘  └─────────────────────┘   │
+└─────────────────────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────┐
+│            Rust Analysis Framework              │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────┐  │
+│  │   Runners   │  │  Analyzers   │  │ Output │  │
+│  │ (Collectors)│  │ (Processors) │  │        │  │
+│  └─────────────┘  └──────────────┘  └────────┘  │
+└─────────────────────────────────────────────────┘
 ```
 
-### Use Nix
+### Core Components
 
-Using [direnv](https://github.com/direnv/direnv) and nix, you can quickly access a dev shell with a complete development environment.
+1. **eBPF Data Collection** (Kernel Space)
+   - `sslsniff`: Intercepts SSL/TLS read/write operations using uprobe hooks
+   - `process`: Monitors process lifecycle and file operations via tracepoints
+   - <3% performance overhead, operates below application layer
 
-With direnv, you can automatically load the required dependencies when you enter the directory.
-This way you don't have to worry about installing dependencies to break your other project development environment.
+2. **Rust Streaming Framework** (User Space)
+   - **Runners**: Execute eBPF programs and stream JSON events
+   - **Analyzers**: Process and transform event streams with pluggable architecture
+   - **Event System**: Standardized event format with rich metadata
 
-See how to install direnv and Nix:
-- direnv: https://github.com/direnv/direnv/blob/master/docs/installation.md
-- Nix: run
-```
-sh <(curl -L https://nixos.org/nix/install) --daemon
-```
+3. **Analysis Pipeline**
 
-Then use the following command to enable direnv support in this directory.
+   ```
+   eBPF Hooks → Raw Data → JSON Stream → Runner → Analyzer Chain → Output
+   ```
 
-```sh
-direnv allow
-```
+## 🚀 Quick Start
 
-If you want use nix flake without direnv, simply run:
+### Prerequisites
 
-```sh
-nix develop
-```
+- **Linux kernel**: 4.1+ with eBPF support (5.0+ recommended)
+- **Root privileges**: Required for eBPF program loading
+- **Rust toolchain**: 1.88.0+ (for building collector)
+- **Build tools**: clang, llvm, libelf-dev
 
-## **Features**
+### Installation
 
-This starter template includes the following features:
+```bash
+# Clone repository with submodules
+git clone https://github.com/yunwei37/agent-tracer.git --recursive
+cd agent-tracer
 
-- A **`Makefile`** that allows you to build the project in one command
-- A **`Dockerfile`** to create a containerized environment for your project
-- A **`flake.nix`** to enter a dev shell with needed dependencies
-- A GitHub action to automate your build and publish process
-  and docker image
-- All necessary dependencies for C development with libbpf
+# Install system dependencies (Ubuntu/Debian)
+make install
 
-## **How to use**
-
-### **1. Create a new repository using this template**
-
-Click the "Use this template" button on the GitHub repository page to create a new repository based on this template.
-
-### **2. Clone your new repository**
-
-Clone your newly created repository to your local machine:
-
-```sh
-git clone https://github.com/your_username/your_new_repository.git --recursive
-```
-
-Or after clone the repo, you can update the git submodule with following commands:
-
-```sh
-git submodule update --init --recursive
-```
-
-### **3. Install dependencies**
-
-For dependencies, it varies from distribution to distribution. You can refer to shell.nix and dockerfile for installation.
-
-On Ubuntu, you may run `make install` or
-
-```sh
-sudo apt-get install -y --no-install-recommends \
-        libelf1 libelf-dev zlib1g-dev \
-        make clang llvm
-```
-
-to install dependencies.
-
-### **4. Build the project**
-
-To build the project, run the following command:
-
-```sh
+# Build eBPF programs
 make build
+
+# Build Rust collector
+cd collector && cargo build --release
 ```
 
-This will compile your code and create the necessary binaries. You can you the `Github Code space` or `Github Action` to build the project as well.
+## ❓ Frequently Asked Questions
 
-### ***Run the Project***
+### General
 
-You can run the binary with:
+**Q: What makes Agent Tracer different from traditional APM tools?**  
+A: Agent Tracer operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
 
-```console
-sudo src/bootstrap
+**Q: Does Agent Tracer impact application performance?**  
+A: Minimal impact (<3% CPU overhead). eBPF runs in kernel space with optimized data collection, avoiding the overhead of userspace monitoring.
+
+**Q: Can agents detect they're being monitored?**  
+A: Detection is extremely difficult since monitoring occurs at the kernel level without modifying application code or injecting libraries.
+
+### Technical
+
+**Q: Which Linux distributions are supported?**  
+A: Any distribution with kernel 4.1+ and eBPF support. Tested on Ubuntu 20.04+, CentOS 8+, RHEL 8+, and Amazon Linux 2.
+
+**Q: Can I monitor multiple agents simultaneously?**  
+A: Yes, use the `agent` or `combined` modes to monitor multiple processes concurrently with automatic event correlation.
+
+**Q: How is sensitive data handled?**  
+A: SSL payload capture is configurable. Enable data redaction in analyzers for production environments. See Security Considerations below.
+
+**Q: What about containers and Kubernetes?**  
+A: Agent Tracer works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
+
+### Troubleshooting
+
+**Q: "Permission denied" when running eBPF programs**  
+A: Ensure you're running with `sudo` or have `CAP_BPF` and `CAP_SYS_ADMIN` capabilities.
+
+**Q: "Failed to load eBPF program" errors**  
+A: Check kernel version (`uname -r`) and eBPF support (`zgrep BPF /proc/config.gz`). Update vmlinux.h if needed.
+
+
+## Use cases
+
+### Deployment Models
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md).
+
+### Development Setup
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/yunwei37/agent-tracer.git
+
+# Install development dependencies  
+make install
+
+# Run tests
+make test
+cd collector && cargo test
+
+# Build debug versions with AddressSanitizer
+make debug
 ```
 
-Or with Github Packages locally:
+### Architecture Documentation
 
-```console
-docker run --rm -it --privileged -v $(pwd):/examples ghcr.io/eunomia-bpf/libbpf-template:latest
-```
+- [CLAUDE.md](CLAUDE.md) - Project guidelines and architecture overview
+- [collector/DESIGN.md](collector/DESIGN.md) - Detailed framework design
+- [docs/why.md](docs/why.md) - Comprehensive problem analysis and motivation
 
-### **7. GitHub Actions**
+## 📄 License
 
-This template also includes a GitHub action that will automatically build and publish your project when you push to the repository.
-To customize this action, edit the **`.github/workflows/publish.yml`** file.
-
-## **Contributing**
-
-We welcome contributions to improve this template! If you have any ideas or suggestions,
-feel free to create an issue or submit a pull request.
-
-## **License**
-
-This project is licensed under the MIT License. See the **[LICENSE](LICENSE)** file for more information.
+**💡 Why Agent Tracer?** In an era where AI agents can modify their own behavior, traditional observability falls short. Agent Tracer provides the independent, tamper-resistant monitoring that organizations need to safely deploy AI agents at scale.

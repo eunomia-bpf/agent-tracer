@@ -9,9 +9,16 @@
 #define MAX_TRACKED_PIDS 1024
 #define MAX_COMMAND_LEN 256
 
+enum filter_mode {
+	FILTER_MODE_ALL = 0,      /* Trace all processes and all read/write operations */
+	FILTER_MODE_PROC = 1,     /* Trace all processes but only read/write for tracked PIDs */
+	FILTER_MODE_FILTER = 2,   /* Only trace processes matching filters and their read/write */
+};
+
 enum event_type {
 	EVENT_TYPE_PROCESS = 0,
 	EVENT_TYPE_BASH_READLINE = 1,
+	EVENT_TYPE_FILE_OPERATION = 2,
 };
 
 struct event {
@@ -24,6 +31,12 @@ struct event {
 	union {
 		char filename[MAX_FILENAME_LEN];     /* for process events */
 		char command[MAX_COMMAND_LEN];       /* for bash readline events */
+		struct {                             /* for file operation events */
+			char filepath[MAX_FILENAME_LEN];
+			int fd;
+			int flags;
+			bool is_open;  /* true for open/openat, false for close */
+		} file_op;
 	};
 	bool exit_event;
 };
