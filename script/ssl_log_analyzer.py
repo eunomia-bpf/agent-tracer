@@ -165,6 +165,8 @@ class SSLLogAnalyzer:
         current_sse_response = None
         sse_merge_timeout = 5000000000  # 5 seconds in nanoseconds
         
+        print(f"Processing {len(sorted_entries)} entries...")
+        
         for entry in sorted_entries:
             entry_type = entry.get('type')
             timestamp = entry.get('timestamp', 0)
@@ -173,6 +175,7 @@ class SSLLogAnalyzer:
             if entry_type == 'request':
                 # Finalize any pending SSE response before processing new request
                 if current_sse_response:
+                    print(f"[DEBUG] Finalizing SSE response due to new request")
                     self._finalize_sse_response(current_sse_response)
                     current_sse_response = None
                     
@@ -182,15 +185,20 @@ class SSLLogAnalyzer:
             elif entry_type == 'response':
                 # Finalize any pending SSE response before processing new response
                 if current_sse_response:
+                    print(f"[DEBUG] Finalizing SSE response due to new response")
                     self._finalize_sse_response(current_sse_response)
                     current_sse_response = None
                     
                 if self.is_sse_response(entry):
                     # This is an SSE response, prepare for chunk merging
+                    print(f"[DEBUG] Found SSE response at timestamp {timestamp}")
                     entry['sse_text_parts'] = []
+                    entry['sse_raw_chunks'] = []  # Store original chunks for debugging
                     # Extract any initial SSE events from the response body
                     if 'body' in entry:
-                        self._extract_sse_events_from_body(entry)
+                        initial_text = self._extract_sse_events_from_body(entry)
+                        if initial_text:
+                            print(f"[DEBUG] Extracted initial text from response: '{initial_text}'")
                     current_sse_response = entry
                     
                 # Add response to timeline
@@ -202,7 +210,17 @@ class SSLLogAnalyzer:
                     time_since_response = timestamp - current_sse_response.get('timestamp', 0)
                     
                     if time_since_response <= sse_merge_timeout:
+                        print(f"[DEBUG] Processing SSE chunk at timestamp {timestamp} (TID: {tid})")
+                        
+                        # Store the raw chunk for debugging
+                        current_sse_response['sse_raw_chunks'].append({
+                            'timestamp': timestamp,
+                            'raw_data': entry.get('raw_data', ''),
+                            'sse_events': entry.get('sse_events', [])
+                        })
+                        
                         # Extract text content from SSE events in this chunk
+                        chunk_text_parts = []
                         for event in entry.get('sse_events', []):
                             if event.get('event') == 'content_block_delta':
                                 if 'parsed_data' in event:
@@ -210,28 +228,40 @@ class SSLLogAnalyzer:
                                     if delta.get('type') == 'text_delta':
                                         text = delta.get('text', '')
                                         if text:
+                                            chunk_text_parts.append(text)
                                             current_sse_response['sse_text_parts'].append(text)
+                        
+                        if chunk_text_parts:
+                            print(f"[DEBUG] Extracted text from chunk: {chunk_text_parts}")
                         
                         # Update response timestamp to latest chunk
                         current_sse_response['timestamp'] = timestamp
                     else:
                         # Timeout reached, finalize current response
+                        print(f"[DEBUG] SSE timeout reached ({time_since_response}ns > {sse_merge_timeout}ns), finalizing")
                         self._finalize_sse_response(current_sse_response)
                         current_sse_response = None
                 else:
                     # No current SSE response or different TID, finalize if exists
                     if current_sse_response:
+                        print(f"[DEBUG] TID mismatch or no current SSE response, finalizing")
                         self._finalize_sse_response(current_sse_response)
                         current_sse_response = None
         
         # Finalize any remaining SSE response
         if current_sse_response:
+            print(f"[DEBUG] Finalizing remaining SSE response")
             self._finalize_sse_response(current_sse_response)
         
         # Final pass: finalize any remaining SSE responses that weren't processed
+        sse_count = 0
         for entry in timeline:
             if entry.get('type') == 'response' and 'sse_text_parts' in entry:
                 self._finalize_sse_response(entry)
+                sse_count += 1
+        
+        if sse_count > 0:
+            print(f"[DEBUG] Final pass: finalized {sse_count} remaining SSE responses")
             
         self.timeline = timeline
         
@@ -239,7 +269,9 @@ class SSLLogAnalyzer:
         """Extract SSE events from the initial response body"""
         body = response.get('body', '')
         if not body:
-            return
+            return ''
+            
+        print(f"[DEBUG] Extracting SSE events from response body (length: {len(body)})")
             
         # Handle chunked encoding - extract actual content from chunks
         content_parts = []
@@ -263,9 +295,12 @@ class SSLLogAnalyzer:
             
         # Join all content and parse SSE events
         full_content = '\n'.join(content_parts)
+        print(f"[DEBUG] Extracted chunked content (length: {len(full_content)})")
         
         # Parse SSE events from the content
         events = self.parse_sse_events_from_chunk(full_content)
+        extracted_texts = []
+        
         for event in events:
             if event.get('event') == 'content_block_delta':
                 if 'parsed_data' in event:
@@ -273,12 +308,28 @@ class SSLLogAnalyzer:
                     if delta.get('type') == 'text_delta':
                         text = delta.get('text', '')
                         if text:
+                            extracted_texts.append(text)
                             response['sse_text_parts'].append(text)
+        
+        merged_text = ''.join(extracted_texts)
+        if extracted_texts:
+            print(f"[DEBUG] Found {len(extracted_texts)} text deltas in response body: {extracted_texts}")
+        else:
+            print(f"[DEBUG] No text deltas found in response body")
+            
+        return merged_text
         
     def _finalize_sse_response(self, sse_response):
         """Finalize an SSE response by merging text parts into body"""
         if 'sse_text_parts' in sse_response:
             merged_text = ''.join(sse_response['sse_text_parts'])
+            raw_chunks_count = len(sse_response.get('sse_raw_chunks', []))
+            
+            print(f"[DEBUG] Finalizing SSE response:")
+            print(f"  - Text parts: {sse_response['sse_text_parts']}")
+            print(f"  - Merged text: '{merged_text}'")
+            print(f"  - Raw chunks count: {raw_chunks_count}")
+            
             if merged_text:
                 # Update the response body with merged content
                 sse_response['body'] = merged_text
@@ -286,15 +337,21 @@ class SSLLogAnalyzer:
                     # Try to parse as JSON if it looks like JSON
                     if merged_text.strip().startswith('{'):
                         sse_response['json_body'] = json.loads(merged_text)
+                        print(f"  - Parsed as JSON body")
                 except json.JSONDecodeError:
+                    print(f"  - Not valid JSON, keeping as text")
                     pass
+            else:
+                print(f"  - No merged text, keeping original body")
             
-            # Clean up SSE-specific fields
+            # Clean up temporary SSE-specific fields but keep raw chunks for debugging
             del sse_response['sse_text_parts']
             # Remove any old SSE-specific fields that might be present
             for field in ['sse_events', 'merged_content', 'sse_chunks', 'merged_sse_events', 'conversation_info', 'sse_summary']:
                 if field in sse_response:
                     del sse_response[field]
+                    
+            print(f"  - Finalization complete")
         
     def analyze(self) -> Dict[str, Any]:
         """Analyze the SSL log file"""
