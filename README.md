@@ -1,17 +1,17 @@
-# Agent Tracer
+# AgentSight
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yunwei37/agent-tracer)
 
-> **The first zero-instrumentation observability framework for AI agents using eBPF-based system-level analysis**
+> **Zero‑instrumentation AI observability, powered by eBPF**
 
-Agent Tracer is a breakthrough observability framework designed specifically for monitoring AI agent behavior through SSL/TLS traffic interception and process monitoring. Unlike traditional application-level instrumentation tools, Agent Tracer observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead.
+AgentSight is a observability framework designed specifically for monitoring AI agent behavior through SSL/TLS traffic interception and process monitoring. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead.
 
 ## 🚀 Key Advantages Over Existing Solutions
 
 ### **vs. LangSmith/Helicone/Langfuse (Application-Level Tools)**
 
-| **Challenge** | **Their Approach** | **Agent Tracer's Solution** |
+| **Challenge** | **Their Approach** | **AgentSight's Solution** |
 |---------------|-------------------|----------------------------|
 | **Agent spawns curl directly** | ❌ Missing span - no visibility | ✅ Captures execve("curl") + network writes |
 | **Agent mutates prompts before logging** | ❌ Shows modified/fake data | ✅ Sees raw ciphertext leaving TLS socket |
@@ -21,7 +21,7 @@ Agent Tracer is a breakthrough observability framework designed specifically for
 
 ### **The System Boundary Advantage**
 
-**Agent Tracer captures what others miss: interactions with the environment**
+**AgentSight captures what others miss: interactions with the environment**
 
 - Subprocess executions that bypass instrumentation
 - Raw encrypted payloads before agent processing  
@@ -40,7 +40,7 @@ Agent Tracer is a breakthrough observability framework designed specifically for
 │   └─────────────────────────────────────────┘   │
 │                     ↕ (Can be silenced)         │
 ├─────────────────────────────────────────────────┤ ← System Boundary
-│  🟢 Agent Tracer eBPF Monitoring (Tamper-proof) │
+│  🟢 AgentSight eBPF Monitoring (Tamper-proof)   │
 │  ┌─────────────────┐  ┌─────────────────────┐   │
 │  │   SSL Traffic   │  │    Process Events   │   │
 │  │   Monitoring    │  │    Monitoring       │   │
@@ -104,10 +104,10 @@ cd collector && cargo build --release
 
 ### General
 
-**Q: What makes Agent Tracer different from traditional APM tools?**  
-A: Agent Tracer operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
+**Q: What makes AgentSight different from traditional APM tools?**  
+A: AgentSight operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
 
-**Q: Does Agent Tracer impact application performance?**  
+**Q: Does AgentSight impact application performance?**  
 A: Minimal impact (<3% CPU overhead). eBPF runs in kernel space with optimized data collection, avoiding the overhead of userspace monitoring.
 
 **Q: Can agents detect they're being monitored?**  
@@ -125,7 +125,7 @@ A: Yes, use the `agent` or `combined` modes to monitor multiple processes concur
 A: SSL payload capture is configurable. Enable data redaction in analyzers for production environments. See Security Considerations below.
 
 **Q: What about containers and Kubernetes?**  
-A: Agent Tracer works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
+A: AgentSight works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
 
 ### Troubleshooting
 
@@ -169,22 +169,4 @@ make debug
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built on [libbpf](https://github.com/libbpf/libbpf) for robust eBPF program management
-- Inspired by the critical need for tamper-resistant AI agent observability  
-- Thanks to the eBPF community for pioneering kernel-level observability
-
-## 📞 Support & Community
-
-- **Issues**: [GitHub Issues](https://github.com/yunwei37/agent-tracer/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yunwei37/agent-tracer/discussions)
-- **Documentation**: [Project Wiki](https://github.com/yunwei37/agent-tracer/wiki)
-
----
-
-**🚨 Security Notice**: Agent Tracer is designed for defensive security and legitimate monitoring purposes. Use responsibly and in compliance with applicable laws and regulations. The system-level monitoring capabilities should only be used in environments where you have proper authorization.
-
-**💡 Why Agent Tracer?** In an era where AI agents can modify their own behavior, traditional observability falls short. Agent Tracer provides the independent, tamper-resistant monitoring that organizations need to safely deploy AI agents at scale.
+**💡 Why AgentSight?** In an era where AI agents can modify their own behavior, traditional observability falls short. AgentSight provides the independent, tamper-resistant monitoring that organizations need to safely deploy AI agents at scale.
