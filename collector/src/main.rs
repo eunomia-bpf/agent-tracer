@@ -38,7 +38,14 @@ enum Commands {
         args: Vec<String>,
     },
     /// Test both runners with embedded binaries
-    Agent,
+    Agent {
+        /// Filter by process command name (comma-separated list)
+        #[arg(short = 'c', long)]
+        comm: Option<String>,
+        /// Filter by process PID
+        #[arg(short = 'p', long)]
+        pid: Option<u32>,
+    },
 }
 
 #[tokio::main]
@@ -51,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
         Commands::Ssl { sse_merge, args } => run_raw_ssl(&binary_extractor, *sse_merge, args).await.map_err(convert_runner_error)?,
         Commands::Process { args } => run_raw_process(&binary_extractor, args).await.map_err(convert_runner_error)?,
-        Commands::Agent => run_both_real(&binary_extractor).await?,
+        Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
     }
     
     Ok(())
@@ -82,16 +89,34 @@ async fn run_process_real(binary_extractor: &BinaryExtractor) -> Result<(), Runn
 }
 
 /// Test both runners with embedded binaries
-async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, pid: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing Both Runners");
     println!("{}", "=".repeat(60));
     
-            let ssl_handle = {
+    // Build arguments for filtering
+    let mut args = Vec::new();
+    if let Some(comm_filter) = comm {
+        args.push("-c".to_string());
+        args.push(comm_filter.to_string());
+    }
+    if let Some(pid_filter) = pid {
+        args.push("-p".to_string());
+        args.push(pid_filter.to_string());
+    }
+    
+    let ssl_handle = {
         let ssl_path = binary_extractor.get_sslsniff_path().to_path_buf();
+        let ssl_args = args.clone();
         tokio::spawn(async move {
             let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path)
-                .with_id("ssl-both".to_string())
-                .add_analyzer(Box::new(OutputAnalyzer::new()));
+                .with_id("ssl-both".to_string());
+            
+            // Add filter arguments if any
+            if !ssl_args.is_empty() {
+                ssl_runner = ssl_runner.with_args(&ssl_args);
+            }
+            
+            ssl_runner = ssl_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
             
             match ssl_runner.run().await {
                 Ok(mut stream) => {
@@ -113,10 +138,17 @@ async fn run_both_real(binary_extractor: &BinaryExtractor) -> Result<(), Box<dyn
     
     let process_handle = {
         let process_path = binary_extractor.get_process_path().to_path_buf();
+        let process_args = args.clone();
         tokio::spawn(async move {
             let mut process_runner = ProcessRunner::from_binary_extractor(process_path)
-                .with_id("process".to_string())
-                .add_analyzer(Box::new(OutputAnalyzer::new()));
+                .with_id("process".to_string());
+            
+            // Add filter arguments if any
+            if !process_args.is_empty() {
+                process_runner = process_runner.with_args(&process_args);
+            }
+            
+            process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
             
             match process_runner.run().await {
                 Ok(mut stream) => {

@@ -7,6 +7,7 @@ A minimal CLI-driven observability framework using a fluent builder pattern wher
 ## Core Architecture
 
 ### 1. Core Event System
+
 ```rust
 pub struct Event {
     pub id: String,
@@ -20,6 +21,7 @@ pub struct Event {
 ### 2. Runners (Fluent Builder Pattern)
 
 #### Base Runner Trait
+
 ```rust
 #[async_trait]
 pub trait Runner: Send + Sync {
@@ -33,18 +35,21 @@ type EventStream = Pin<Box<dyn Stream<Item = ObservabilityEvent> + Send>>;
 ```
 
 #### Runner Implementation
+
 ```rust
 pub struct SslRunner {
     id: String,
     analyzers: Vec<Box<dyn Analyzer>>,
     config: SslConfig,
+    executor: BinaryExecutor,
+    additional_args: Vec<String>,
 }
 
 impl SslRunner {
-    pub fn new() -> Self;
-    pub fn with_id(id: String) -> Self;
-    pub fn port(mut self, port: u16) -> Self;
-    pub fn interface(mut self, interface: String) -> Self;
+    pub fn from_binary_extractor(binary_path: impl AsRef<Path>) -> Self;
+    pub fn with_id(mut self, id: String) -> Self;
+    pub fn with_args<I, S>(mut self, args: I) -> Self;
+    pub fn tls_version(mut self, version: String) -> Self;
 }
 
 impl Runner for SslRunner {
@@ -53,16 +58,394 @@ impl Runner for SslRunner {
         self
     }
     
-    async fn run(&mut self) -> Result<EventStream, Box<dyn std::error::Error>> {
-        let raw_stream = self.collect_ssl_events().await?;
-        self.process_through_analyzers(raw_stream).await
+    async fn run(&mut self) -> Result<EventStream, RunnerError> {
+        let json_stream = self.executor.get_json_stream().await?;
+        let event_stream = json_stream.map(|json_value| {
+            Event::new_with_id_and_timestamp(
+                Uuid::new_v4().to_string(),
+                extract_timestamp(&json_value),
+                "ssl".to_string(),
+                json_value,
+            )
+        });
+        AnalyzerProcessor::process_through_analyzers(Box::pin(event_stream), &mut self.analyzers).await
     }
+}
+
+pub struct ProcessRunner {
+    id: String,
+    analyzers: Vec<Box<dyn Analyzer>>,
+    config: ProcessConfig,
+    executor: BinaryExecutor,
+    additional_args: Vec<String>,
+}
+
+impl ProcessRunner {
+    pub fn from_binary_extractor(binary_path: impl AsRef<Path>) -> Self;
+    pub fn with_id(mut self, id: String) -> Self;
+    pub fn with_args<I, S>(mut self, args: I) -> Self;
+    pub fn pid(mut self, pid: u32) -> Self;
+    pub fn memory_threshold(mut self, threshold: u64) -> Self;
+}
+
+impl Runner for ProcessRunner {
+    fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
+        self.analyzers.push(analyzer);
+        self
+    }
+    
+    async fn run(&mut self) -> Result<EventStream, RunnerError> {
+        let json_stream = self.executor.get_json_stream().await?;
+        let event_stream = json_stream.map(|json_value| {
+            Event::new_with_id_and_timestamp(
+                Uuid::new_v4().to_string(),
+                extract_timestamp(&json_value),
+                "process".to_string(),
+                json_value,
+            )
+        });
+        AnalyzerProcessor::process_through_analyzers(Box::pin(event_stream), &mut self.analyzers).await
+    }
+}
+
+/// Agent runner that runs both SSL and Process runners concurrently
+///
+/// This runner provides a simple interface for running both SSL and Process 
+/// monitoring simultaneously. It returns a merged stream of events from both
+/// sources. It's particularly useful for:
+/// - Monitoring both network traffic and system processes
+/// - Correlating SSL events with process events
+/// - Simplified deployment with concurrent execution
+/// - Stream-based processing with analyzer support
+///
+/// Note: This differs from the current main.rs implementation which spawns
+/// separate tasks and waits for completion statistics. This design follows
+/// the streaming architecture used by other runners and analyzers.
+pub struct AgentRunner {
+    id: String,
+    analyzers: Vec<Box<dyn Analyzer>>,
+    ssl_runner: SslRunner,
+    process_runner: ProcessRunner,
+}
+
+impl AgentRunner {
+    pub fn new(ssl_binary_path: impl AsRef<Path>, process_binary_path: impl AsRef<Path>) -> Self {
+        let ssl_runner = SslRunner::from_binary_extractor(ssl_binary_path)
+            .with_id("ssl".to_string());
+        let process_runner = ProcessRunner::from_binary_extractor(process_binary_path)
+            .with_id("process".to_string());
+        
+        Self {
+            id: Uuid::new_v4().to_string(),
+            analyzers: Vec::new(),
+            ssl_runner,
+            process_runner,
+        }
+    }
+    
+    pub fn with_id(mut self, id: String) -> Self {
+        self.id = id;
+        self
+    }
+    
+    pub fn with_ssl_args<I, S>(mut self, args: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.ssl_runner = self.ssl_runner.with_args(args);
+        self
+    }
+    
+    pub fn with_process_args<I, S>(mut self, args: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.process_runner = self.process_runner.with_args(args);
+        self
+    }
+    
+    pub fn with_comm_filter(self, comm: String) -> Self {
+        self.with_ssl_args(vec!["-c", &comm])
+            .with_process_args(vec!["-c", &comm])
+    }
+    
+    pub fn with_pid_filter(self, pid: u32) -> Self {
+        let pid_str = pid.to_string();
+        self.with_ssl_args(vec!["-p", &pid_str])
+            .with_process_args(vec!["-p", &pid_str])
+    }
+}
+
+impl Runner for AgentRunner {
+    fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
+        self.analyzers.push(analyzer);
+        self
+    }
+    
+    async fn run(&mut self) -> Result<EventStream, RunnerError> {
+        // Start both runners and get their streams
+        let ssl_stream = self.ssl_runner.run().await?;
+        let process_stream = self.process_runner.run().await?;
+        
+        // Merge the streams using select to interleave events as they arrive
+        use futures::stream::{select, StreamExt};
+        
+        let merged_stream = select(ssl_stream, process_stream).map(|mut event| {
+            // Tag events with their source runner for debugging
+            if let Some(data) = event.data.as_object_mut() {
+                data.insert("runner_source".to_string(), serde_json::json!(event.source.clone()));
+            }
+            event
+        });
+        
+        // Process through analyzer chain
+        AnalyzerProcessor::process_through_analyzers(Box::pin(merged_stream), &mut self.analyzers).await
+    }
+    
+    fn name(&self) -> &str {
+        "agent"
+    }
+    
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+/// Generic combined runner that can dynamically combine any collection of runners
+///
+/// This runner provides a flexible abstraction for combining multiple runners
+/// of any type into a single stream. It supports:
+/// - Combining multiple instances of the same runner type (e.g., 2 SSL runners)
+/// - Combining different runner types (e.g., SSL + Process)
+/// - Recursive composition (combining already combined runners)
+/// - Dynamic runtime configuration
+/// - Stream merging with configurable strategies
+/// - Analyzer chain processing on the merged stream
+///
+/// Examples:
+/// - Combine 2 SSL runners monitoring different ports
+/// - Combine 2 process runners monitoring different PIDs
+/// - Combine SSL + Process runners for correlation
+/// - Combine multiple combined runners for complex topologies
+pub struct CombinedRunner {
+    id: String,
+    runners: Vec<Box<dyn Runner>>,
+    analyzers: Vec<Box<dyn Analyzer>>,
+    merge_strategy: MergeStrategy,
+}
+
+impl CombinedRunner {
+    pub fn new() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            runners: Vec::new(),
+            analyzers: Vec::new(),
+            merge_strategy: MergeStrategy::TimeOrdered,
+        }
+    }
+    
+    pub fn with_id(mut self, id: String) -> Self {
+        self.id = id;
+        self
+    }
+    
+    pub fn add_runner(mut self, runner: Box<dyn Runner>) -> Self {
+        self.runners.push(runner);
+        self
+    }
+    
+    pub fn with_merge_strategy(mut self, strategy: MergeStrategy) -> Self {
+        self.merge_strategy = strategy;
+        self
+    }
+    
+    pub fn runner_count(&self) -> usize {
+        self.runners.len()
+    }
+    
+    pub fn get_runner_ids(&self) -> Vec<String> {
+        self.runners.iter().map(|r| r.id()).collect()
+    }
+    
+    // Convenience methods for common combinations
+    pub fn ssl_and_process(ssl_binary_path: impl AsRef<Path>, process_binary_path: impl AsRef<Path>) -> Self {
+        let ssl_runner = SslRunner::from_binary_extractor(ssl_binary_path)
+            .with_id("ssl".to_string());
+        let process_runner = ProcessRunner::from_binary_extractor(process_binary_path)
+            .with_id("process".to_string());
+        
+        Self::new()
+            .with_id("ssl-process-combined".to_string())
+            .add_runner(Box::new(ssl_runner))
+            .add_runner(Box::new(process_runner))
+    }
+    
+    pub fn multiple_ssl<P: AsRef<Path>>(binary_path: P, configs: Vec<SslRunnerConfig>) -> Self {
+        let mut combined = Self::new().with_id("multi-ssl-combined".to_string());
+        
+        for (i, config) in configs.into_iter().enumerate() {
+            let mut ssl_runner = SslRunner::from_binary_extractor(&binary_path)
+                .with_id(format!("ssl-{}", i));
+            
+            if !config.args.is_empty() {
+                ssl_runner = ssl_runner.with_args(config.args);
+            }
+            
+            if let Some(version) = config.tls_version {
+                ssl_runner = ssl_runner.tls_version(version);
+            }
+            
+            combined = combined.add_runner(Box::new(ssl_runner));
+        }
+        
+        combined
+    }
+    
+    pub fn multiple_process<P: AsRef<Path>>(binary_path: P, configs: Vec<ProcessRunnerConfig>) -> Self {
+        let mut combined = Self::new().with_id("multi-process-combined".to_string());
+        
+        for (i, config) in configs.into_iter().enumerate() {
+            let mut process_runner = ProcessRunner::from_binary_extractor(&binary_path)
+                .with_id(format!("process-{}", i));
+            
+            if !config.args.is_empty() {
+                process_runner = process_runner.with_args(config.args);
+            }
+            
+            if let Some(pid) = config.pid {
+                process_runner = process_runner.pid(pid);
+            }
+            
+            if let Some(threshold) = config.memory_threshold {
+                process_runner = process_runner.memory_threshold(threshold);
+            }
+            
+            combined = combined.add_runner(Box::new(process_runner));
+        }
+        
+        combined
+    }
+}
+
+impl Runner for CombinedRunner {
+    fn add_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
+        self.analyzers.push(analyzer);
+        self
+    }
+    
+    async fn run(&mut self) -> Result<EventStream, RunnerError> {
+        if self.runners.is_empty() {
+            return Err(RunnerError::Configuration("No runners configured".to_string()));
+        }
+        
+        // Start all child runners and collect their streams
+        let mut streams = Vec::new();
+        for runner in &mut self.runners {
+            let stream = runner.run().await?;
+            streams.push(stream);
+        }
+        
+        // Merge all streams based on the configured strategy
+        let merged_stream = self.merge_streams(streams).await?;
+        
+        // Process through analyzer chain
+        AnalyzerProcessor::process_through_analyzers(merged_stream, &mut self.analyzers).await
+    }
+    
+    fn name(&self) -> &str {
+        "combined"
+    }
+    
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+impl CombinedRunner {
+    async fn merge_streams(&self, streams: Vec<EventStream>) -> Result<EventStream, RunnerError> {
+        use futures::stream::{select_all, StreamExt};
+        
+        if streams.is_empty() {
+            return Err(RunnerError::Configuration("No streams to merge".to_string()));
+        }
+        
+        if streams.len() == 1 {
+            return Ok(streams.into_iter().next().unwrap());
+        }
+        
+        match self.merge_strategy {
+            MergeStrategy::TimeOrdered => {
+                // For time-ordered merging, we'd need a more sophisticated approach
+                // For now, use immediate merging as a fallback
+                let merged = select_all(streams).map(|mut event| {
+                    // Tag events with combined runner info
+                    if let Some(data) = event.data.as_object_mut() {
+                        data.insert("combined_runner_id".to_string(), serde_json::json!(self.id.clone()));
+                    }
+                    event
+                });
+                Ok(Box::pin(merged))
+            },
+            MergeStrategy::Immediate => {
+                let merged = select_all(streams).map(|mut event| {
+                    // Tag events with combined runner info
+                    if let Some(data) = event.data.as_object_mut() {
+                        data.insert("combined_runner_id".to_string(), serde_json::json!(self.id.clone()));
+                    }
+                    event
+                });
+                Ok(Box::pin(merged))
+            },
+            MergeStrategy::RoundRobin => {
+                // TODO: Implement round-robin merging
+                let merged = select_all(streams).map(|mut event| {
+                    if let Some(data) = event.data.as_object_mut() {
+                        data.insert("combined_runner_id".to_string(), serde_json::json!(self.id.clone()));
+                    }
+                    event
+                });
+                Ok(Box::pin(merged))
+            },
+            MergeStrategy::Priority => {
+                // TODO: Implement priority-based merging
+                let merged = select_all(streams).map(|mut event| {
+                    if let Some(data) = event.data.as_object_mut() {
+                        data.insert("combined_runner_id".to_string(), serde_json::json!(self.id.clone()));
+                    }
+                    event
+                });
+                Ok(Box::pin(merged))
+            },
+        }
+    }
+}
+
+// Configuration structs for convenience methods
+pub struct SslRunnerConfig {
+    pub args: Vec<String>,
+    pub tls_version: Option<String>,
+}
+
+pub struct ProcessRunnerConfig {
+    pub args: Vec<String>,
+    pub pid: Option<u32>,
+    pub memory_threshold: Option<u64>,
+}
+
+pub enum MergeStrategy {
+    TimeOrdered,    // Merge by timestamp (default)
+    Immediate,      // First-come-first-served
+    RoundRobin,     // Alternate between streams
+    Priority,       // Priority-based merging using runner priorities
 }
 ```
 
 ### 3. Runner Orchestrator
 
 #### Orchestrator for Multiple Runners
+
 ```rust
 pub struct RunnerOrchestrator {
     runners: HashMap<String, Box<dyn Runner>>,
@@ -110,6 +493,7 @@ pub enum RunnerStatus {
 ```
 
 #### Stream Merger
+
 ```rust
 pub struct StreamMerger {
     merge_strategy: MergeStrategy,
@@ -134,6 +518,7 @@ impl StreamMerger {
 ### 4. Analyzers (Stream Processors)
 
 #### Base Analyzer Trait
+
 ```rust
 #[async_trait]
 pub trait Analyzer: Send + Sync {
@@ -143,6 +528,7 @@ pub trait Analyzer: Send + Sync {
 ```
 
 #### Analyzer Types
+
 - **RawAnalyzer**: Pass-through for raw JSON output
 - **ExtractAnalyzer**: Extract specific fields/patterns
 - **MergeAnalyzer**: Combine related events
@@ -154,6 +540,7 @@ pub trait Analyzer: Send + Sync {
 ### 5. Storage System
 
 #### Storage Trait
+
 ```rust
 #[async_trait]
 pub trait Storage: Send + Sync {
@@ -188,6 +575,7 @@ pub struct RunnerStats {
 ```
 
 #### In-Memory Storage
+
 ```rust
 pub struct InMemoryStorage {
     events: Arc<RwLock<Vec<ObservabilityEvent>>>,
@@ -205,6 +593,7 @@ impl InMemoryStorage {
 ### 6. Server Component
 
 #### Enhanced REST API Server
+
 ```rust
 pub struct ObservabilityServer {
     orchestrator: Arc<Mutex<RunnerOrchestrator>>,
@@ -224,6 +613,7 @@ impl ObservabilityServer {
 ```
 
 #### Enhanced API Endpoints
+
 ```
 GET    /health                    - Health check
 GET    /runners                   - List all runners and their status
@@ -241,6 +631,7 @@ GET    /stream/runner/{id}        - Live stream from specific runner
 ```
 
 ### 7. Output Handlers
+
 ```rust
 pub enum OutputMode {
     Stdout,
@@ -258,626 +649,511 @@ pub struct OutputHandler {
 
 ## Implementation Examples
 
-### 1. Simple Single Runner
+### 1. SSL Runner
+
 ```rust
-// agent-tracer sslsniff --raw
-SslRunner::new()
-    .add_analyzer(Box::new(RawAnalyzer::new()))
-    .run()
-    .await?
+// agent-tracer ssl --sse-merge -- --port 443
+let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+    .with_id("ssl-raw".to_string())
+    .with_args(vec!["--port", "443"])
+    .add_analyzer(Box::new(ChunkMerger::new_with_timeout(30000)))
+    .add_analyzer(Box::new(FileLogger::new("ssl.log").unwrap()))
+    .add_analyzer(Box::new(OutputAnalyzer::new()));
+
+let mut stream = ssl_runner.run().await?;
+while let Some(_event) = stream.next().await {
+    // Events are processed by the analyzers in the chain
+}
 ```
 
-### 2. Multiple Runners with Orchestrator
+### 2. Process Runner
+
 ```rust
-// agent-tracer sslsniff process --merge --store --serve 0.0.0.0:8080
-let storage = InMemoryStorage::shared();
+// agent-tracer process -- --pid 1234
+let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+    .with_id("process-raw".to_string())
+    .with_args(vec!["--pid", "1234"])
+    .add_analyzer(Box::new(OutputAnalyzer::new()));
 
-let orchestrator = RunnerOrchestrator::new(storage.clone())
-    .add_runner(Box::new(
-        SslRunner::new()
-            .with_id("ssl-443".to_string())
-            .port(443)
-            .add_analyzer(Box::new(ExtractAnalyzer::new(vec!["host", "port"])))
-            .add_analyzer(Box::new(StorageAnalyzer::new(storage.clone())))
-    ))
-    .add_runner(Box::new(
-        ProcessRunner::new()
-            .with_id("proc-python".to_string())
-            .filter("name:python")
-            .add_analyzer(Box::new(ExtractAnalyzer::new(vec!["pid", "cpu"])))
-            .add_analyzer(Box::new(StorageAnalyzer::new(storage.clone())))
-    ));
-
-// Start all runners
-orchestrator.start_all().await?;
-
-// Start server for management
-let server = ObservabilityServer::new(
-    Arc::new(Mutex::new(orchestrator)),
-    storage,
-    "0.0.0.0:8080".to_string()
-);
-server.start().await?;
+let mut stream = process_runner.run().await?;
+while let Some(_event) = stream.next().await {
+    // Events are processed by the analyzers in the chain
+}
 ```
 
-### 3. Dynamic Runner Management via API
+### 3. Agent Runner (Both SSL and Process)
+
 ```rust
-// Server can manage runners dynamically
-let orchestrator = RunnerOrchestrator::new(storage.clone());
+// agent-tracer agent --comm python --pid 1234
+let binary_extractor = BinaryExtractor::new().await?;
 
-// Add runners without starting them
-orchestrator.add_runner(Box::new(SslRunner::new().with_id("ssl-main")));
-orchestrator.add_runner(Box::new(ProcessRunner::new().with_id("proc-main")));
+let mut agent_runner = AgentRunner::new(
+    binary_extractor.get_sslsniff_path(), 
+    binary_extractor.get_process_path()
+)
+.with_id("agent-both".to_string())
+.with_comm_filter("python".to_string())
+.with_pid_filter(1234)
+.add_analyzer(Box::new(OutputAnalyzer::new()));
 
-// Start server - runners can be controlled via API
-let server = ObservabilityServer::new(
-    Arc::new(Mutex::new(orchestrator)),
-    storage,
-    "0.0.0.0:8080".to_string()
-);
-server.start().await?;
+// Get the merged stream from both SSL and process runners
+let mut stream = agent_runner.run().await?;
 
-// Frontend can now:
-// POST /runners/ssl-main/start
-// POST /runners/proc-main/start  
-// GET /stream/merged (combined stream)
+// Process events as they arrive from either runner
+while let Some(event) = stream.next().await {
+    // Events are processed by the analyzers in the chain
+    // Each event is tagged with its source ("ssl" or "process")
+}
 ```
 
-### 4. Advanced Stream Merging
+### 4. Combined Runner (Multiple SSL Runners)
+
 ```rust
-let storage = InMemoryStorage::shared();
+// agent-tracer combined --ssl-binary /path/to/sslsniff --ssl-args "--port 443" --ssl-args "--port 8443"
+let binary_extractor = BinaryExtractor::new().await?;
 
-let mut orchestrator = RunnerOrchestrator::new(storage.clone())
-    .add_runner(Box::new(
-        SslRunner::new()
-            .with_id("ssl-high-priority")
-            .add_analyzer(Box::new(FilterAnalyzer::new("severity:critical")))
-            .add_analyzer(Box::new(StorageAnalyzer::new(storage.clone())))
-    ))
-    .add_runner(Box::new(
-        ProcessRunner::new()
-            .with_id("process-low-priority")
-            .add_analyzer(Box::new(FilterAnalyzer::new("cpu<10")))
-            .add_analyzer(Box::new(StorageAnalyzer::new(storage.clone())))
-    ));
+let mut combined_runner = CombinedRunner::new()
+    .with_id("multi-ssl-combined".to_string())
+    .add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-port-443".to_string())
+        .with_args(vec!["--port", "443"])))
+    .add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-port-8443".to_string())
+        .with_args(vec!["--port", "8443"])));
 
-// Configure priority-based merging
-orchestrator.stream_merger = StreamMerger::new(
-    MergeStrategy::Priority(hashmap! {
-        "ssl-high-priority".to_string() => 10,
-        "process-low-priority".to_string() => 1,
-    })
-);
+let mut stream = combined_runner.run().await?;
+while let Some(event) = stream.next().await {
+    // Events are processed by the analyzers in the chain
+    // Each event is tagged with the combined runner ID
+}
+```
 
-orchestrator.start_all().await?;
+### 5. Combined Runner (Multiple Process Runners)
 
-// Get merged stream with priority ordering
-let merged_stream = orchestrator.get_merged_stream().await?;
+```rust
+// Monitor multiple processes with different PIDs
+let binary_extractor = BinaryExtractor::new().await?;
+
+let mut combined_runner = CombinedRunner::new()
+    .with_id("multi-process-combined".to_string())
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-python".to_string())
+        .with_args(vec!["-c", "python"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-node".to_string())
+        .with_args(vec!["-c", "node"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-1234".to_string())
+        .with_args(vec!["-p", "1234"])))
+    .add_analyzer(Box::new(OutputAnalyzer::new()));
+
+let mut stream = combined_runner.run().await?;
+while let Some(event) = stream.next().await {
+    // Events from all three process runners are merged
+}
+```
+
+### 6. Combined Runner (SSL + Process Mix)
+
+```rust
+// Combine SSL and Process runners for comprehensive monitoring
+let binary_extractor = BinaryExtractor::new().await?;
+
+let mut combined_runner = CombinedRunner::new()
+    .with_id("ssl-process-mix".to_string())
+    .add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-https".to_string())
+        .with_args(vec!["--port", "443"])))
+    .add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-dev".to_string())
+        .with_args(vec!["--port", "8443"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-web".to_string())
+        .with_args(vec!["-c", "nginx"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-app".to_string())
+        .with_args(vec!["-c", "python"])))
+    .with_merge_strategy(MergeStrategy::TimeOrdered)
+    .add_analyzer(Box::new(CorrelationAnalyzer::new()))
+    .add_analyzer(Box::new(OutputAnalyzer::new()));
+
+let mut stream = combined_runner.run().await?;
+while let Some(event) = stream.next().await {
+    // Events from 2 SSL runners and 2 Process runners are merged and correlated
+}
+```
+
+### 7. Recursive Combined Runner (Combining Combined Runners)
+
+```rust
+// Create nested combinations for complex monitoring topologies
+let binary_extractor = BinaryExtractor::new().await?;
+
+// Create a combined runner for web services (SSL + Process)
+let web_services_runner = CombinedRunner::new()
+    .with_id("web-services".to_string())
+    .add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-web".to_string())
+        .with_args(vec!["--port", "443"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-web".to_string())
+        .with_args(vec!["-c", "nginx"])))
+    .add_analyzer(Box::new(FilterAnalyzer::new("web_filter")));
+
+// Create a combined runner for database services
+let db_services_runner = CombinedRunner::new()
+    .with_id("db-services".to_string())
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-postgres".to_string())
+        .with_args(vec!["-c", "postgres"])))
+    .add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-redis".to_string())
+        .with_args(vec!["-c", "redis"])))
+    .add_analyzer(Box::new(FilterAnalyzer::new("db_filter")));
+
+// Combine the combined runners into a master runner
+let mut master_runner = CombinedRunner::new()
+    .with_id("master-services".to_string())
+    .add_runner(Box::new(web_services_runner))
+    .add_runner(Box::new(db_services_runner))
+    .with_merge_strategy(MergeStrategy::Priority)
+    .add_analyzer(Box::new(CorrelationAnalyzer::new()))
+    .add_analyzer(Box::new(StorageAnalyzer::new(InMemoryStorage::shared())))
+    .add_analyzer(Box::new(OutputAnalyzer::new()));
+
+let mut stream = master_runner.run().await?;
+while let Some(event) = stream.next().await {
+    // Events from nested combined runners are merged with priority strategy
+}
+```
+
+### 8. Convenience Methods for Common Patterns
+
+```rust
+// Using convenience methods for common combinations
+let binary_extractor = BinaryExtractor::new().await?;
+
+// SSL + Process combination (equivalent to AgentRunner)
+let agent_runner = CombinedRunner::ssl_and_process(
+    binary_extractor.get_sslsniff_path(),
+    binary_extractor.get_process_path()
+)
+.add_analyzer(Box::new(OutputAnalyzer::new()));
+
+// Multiple SSL runners with different configurations
+let multi_ssl_runner = CombinedRunner::multiple_ssl(
+    binary_extractor.get_sslsniff_path(),
+    vec![
+        SslRunnerConfig {
+            args: vec!["--port".to_string(), "443".to_string()],
+            tls_version: Some("1.3".to_string()),
+        },
+        SslRunnerConfig {
+            args: vec!["--port".to_string(), "8443".to_string()],
+            tls_version: Some("1.2".to_string()),
+        },
+    ]
+)
+.add_analyzer(Box::new(OutputAnalyzer::new()));
+
+// Multiple Process runners with different configurations
+let multi_process_runner = CombinedRunner::multiple_process(
+    binary_extractor.get_process_path(),
+    vec![
+        ProcessRunnerConfig {
+            args: vec!["-c".to_string(), "python".to_string()],
+            pid: None,
+            memory_threshold: Some(1024 * 1024 * 100), // 100MB
+        },
+        ProcessRunnerConfig {
+            args: vec!["-c".to_string(), "node".to_string()],
+            pid: None,
+            memory_threshold: Some(1024 * 1024 * 200), // 200MB
+        },
+        ProcessRunnerConfig {
+            args: vec![],
+            pid: Some(1234),
+            memory_threshold: None,
+        },
+    ]
+)
+.add_analyzer(Box::new(OutputAnalyzer::new()));
+```
+
+### 9. Dynamic Runtime Configuration
+
+```rust
+// Build combined runners dynamically at runtime
+let binary_extractor = BinaryExtractor::new().await?;
+let mut combined_runner = CombinedRunner::new().with_id("dynamic-combined".to_string());
+
+// Add runners based on runtime conditions
+if monitor_ssl {
+    combined_runner = combined_runner.add_runner(Box::new(SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-dynamic".to_string())
+        .with_args(ssl_args)));
+}
+
+if monitor_processes {
+    for pid in process_pids {
+        combined_runner = combined_runner.add_runner(Box::new(ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+            .with_id(format!("process-{}", pid))
+            .pid(pid)));
+    }
+}
+
+// Add analyzers based on requirements
+if enable_correlation {
+    combined_runner = combined_runner.add_analyzer(Box::new(CorrelationAnalyzer::new()));
+}
+
+if enable_storage {
+    combined_runner = combined_runner.add_analyzer(Box::new(StorageAnalyzer::new(InMemoryStorage::shared())));
+}
+
+combined_runner = combined_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
+
+let mut stream = combined_runner.run().await?;
+while let Some(event) = stream.next().await {
+    // Handle dynamically configured events
+}
 ```
 
 ## CLI Design
 
 ### Focused Subcommands
+
 ```bash
-# observe: Capture and combine events from both SSL and process monitoring
-agent-tracer observe [OPTIONS]
+# ssl: Analyze SSL traffic with raw JSON output
+agent-tracer ssl [OPTIONS]
 
-# api: Capture only SSL/TLS API events  
-agent-tracer api [OPTIONS]
-
-# process: Capture only system/process events
+# process: Test process runner with embedded binary
 agent-tracer process [OPTIONS]
 
-# server: Start server mode for frontend integration
-agent-tracer server [OPTIONS]
+# agent: Test both runners with embedded binaries
+agent-tracer agent [OPTIONS]
 
-# dyn: Dynamic configuration and runner management
-agent-tracer dyn [COMMAND]
+# combined: Test multiple runners with embedded binaries
+agent-tracer combined [OPTIONS]
 ```
 
 ### CLI Architecture
+
 ```rust
 #[derive(Parser)]
-#[command(name = "agent-tracer")]
-#[command(about = "AI Agent Observability Framework")]
-pub struct Cli {
+#[command(author, version, about, long_about = None)]
+struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
-pub enum Commands {
-    /// Capture and combine events from both SSL and process monitoring
-    Observe {
-        // Analyzer flags
+enum Commands {
+    /// Analyze SSL traffic with raw JSON output
+    Ssl {
+        /// Enable HTTP chunk merging for SSL traffic
         #[arg(long)]
-        raw: bool,
-        
-        #[arg(long)]
-        extract: Option<String>,
-        
-        #[arg(long)]
-        filter: Option<String>,
-        
-        #[arg(long)]
-        merge: bool,
-        
-        #[arg(long)]
-        count: bool,
-        
-        #[arg(long)]
-        store: bool,
-        
-        // Merge strategy for combining streams
-        #[arg(long, default_value = "time-ordered")]
-        merge_strategy: MergeStrategy,
-        
-        // Output options
-        #[arg(long)]
-        output: Option<OutputMode>,
-        
-        // Runner-specific config
-        #[arg(long)]
-        ssl_port: Option<u16>,
-        
-        #[arg(long)]
-        ssl_interface: Option<String>,
-        
-        #[arg(long)]
-        process_filter: Option<String>,
+        sse_merge: bool,
+        /// Additional arguments to pass to the SSL binary
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     
-    /// Capture only SSL/TLS API events
-    Api {
-        // SSL-specific config
-        #[arg(long)]
-        port: Option<u16>,
-        
-        #[arg(long)]
-        interface: Option<String>,
-        
-        #[arg(long)]
-        tls_version: Option<String>,
-        
-        // Analyzer flags
-        #[arg(long)]
-        raw: bool,
-        
-        #[arg(long)]
-        extract: Option<String>,
-        
-        #[arg(long)]
-        filter: Option<String>,
-        
-        #[arg(long)]
-        merge: bool,
-        
-        #[arg(long)]
-        count: bool,
-        
-        #[arg(long)]
-        store: bool,
-        
-        // Output options
-        #[arg(long)]
-        output: Option<OutputMode>,
-    },
-    
-    /// Capture only system/process events
+    /// Test process runner with embedded binary
     Process {
-        // Process-specific config
-        #[arg(long)]
+        /// Additional arguments to pass to the process binary
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    
+    /// Test both runners with embedded binaries
+    Agent {
+        /// Filter by process command name (comma-separated list)
+        #[arg(short = 'c', long)]
+        comm: Option<String>,
+        /// Filter by process PID
+        #[arg(short = 'p', long)]
         pid: Option<u32>,
-        
-        #[arg(long)]
-        name: Option<String>,
-        
-        #[arg(long)]
-        cpu_threshold: Option<f32>,
-        
-        #[arg(long)]
-        memory_threshold: Option<u64>,
-        
-        // Analyzer flags
-        #[arg(long)]
-        raw: bool,
-        
-        #[arg(long)]
-        extract: Option<String>,
-        
-        #[arg(long)]
-        filter: Option<String>,
-        
-        #[arg(long)]
-        merge: bool,
-        
-        #[arg(long)]
-        count: bool,
-        
-        #[arg(long)]
-        store: bool,
-        
-        // Output options
-        #[arg(long)]
-        output: Option<OutputMode>,
     },
-    
-    /// Start server mode for frontend integration
-    Server {
-        // Server config
-        #[arg(long, default_value = "0.0.0.0:8080")]
-        bind: String,
-        
-        #[arg(long)]
-        cors: bool,
-        
-        #[arg(long)]
-        static_dir: Option<String>,
-        
-        // Default runners to start
-        #[arg(long)]
-        enable_ssl: bool,
-        
-        #[arg(long)]
-        enable_process: bool,
-        
-        #[arg(long)]
-        ssl_port: Option<u16>,
-        
-        #[arg(long)]
-        process_filter: Option<String>,
-        
-        // Storage config
-        #[arg(long, default_value = "50000")]
-        max_events: usize,
-    },
-    
-    /// Dynamic configuration and runner management  
-    Dyn {
-        #[command(subcommand)]
-        action: DynCommands,
-    },
-}
 
-#[derive(Subcommand)]
-pub enum DynCommands {
-    /// List active runners
-    List,
-    
-    /// Start a runner
-    Start {
-        #[arg(value_enum)]
-        runner_type: RunnerType,
-        
+    /// Test multiple runners with embedded binaries
+    Combined {
+        /// Path to the binary for SSL runners
         #[arg(long)]
-        id: String,
-        
+        ssl_binary: Option<String>,
+        /// Path to the binary for Process runners
         #[arg(long)]
-        config: Option<String>, // JSON config
+        process_binary: Option<String>,
+        /// Arguments for SSL runners (repeatable)
+        #[arg(last = true)]
+        ssl_args: Vec<String>,
+        /// Arguments for Process runners (repeatable)
+        #[arg(last = true)]
+        process_args: Vec<String>,
+        /// Filter by process command name (comma-separated list) for combined SSL runners
+        #[arg(short = 'c', long)]
+        comm: Option<String>,
+        /// Filter by process PID for combined Process runners
+        #[arg(short = 'p', long)]
+        pid: Option<u32>,
     },
-    
-    /// Stop a runner
-    Stop {
-        #[arg(long)]
-        id: String,
-    },
-    
-    /// Get runner status
-    Status {
-        #[arg(long)]
-        id: Option<String>, // If None, show all
-    },
-    
-    /// Configure storage
-    Storage {
-        #[arg(long)]
-        max_events: Option<usize>,
-        
-        #[arg(long)]
-        clear: bool,
-    },
-}
-
-#[derive(ValueEnum, Clone)]
-pub enum RunnerType {
-    Ssl,
-    Process,
-}
-
-#[derive(ValueEnum, Clone)]
-pub enum MergeStrategy {
-    TimeOrdered,
-    RoundRobin,
-    Priority,
-    Immediate,
-}
-
-#[derive(ValueEnum, Clone)]
-pub enum OutputMode {
-    Stdout,
-    Json,
-    Pretty,
-    File,
 }
 ```
 
-## Implementation Examples
+## Command Implementations
 
-### 1. Observe Mode (Combined Monitoring)
+### SSL Command
+
 ```rust
-// agent-tracer observe --merge --store --extract "host,pid,cpu"
-pub async fn run_observe_command(args: ObserveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let storage = InMemoryStorage::shared();
+// agent-tracer ssl --sse-merge -- --port 443
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+    let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
+        .with_id("ssl-raw".to_string());
     
-    let orchestrator = RunnerOrchestrator::new(storage.clone())
-        .add_runner(Box::new(
-            SslRunner::new()
-                .with_id("observe-ssl".to_string())
-                .port(args.ssl_port.unwrap_or(443))
-                .interface(args.ssl_interface.unwrap_or_else(|| "any".to_string()))
-                .add_analyzer(Box::new(ExtractAnalyzer::new_if_specified(args.extract.clone())))
-                .add_analyzer(Box::new(FilterAnalyzer::new_if_specified(args.filter.clone())))
-                .add_analyzer(Box::new(MergeAnalyzer::new_if(args.merge)))
-                .add_analyzer(Box::new(CountAnalyzer::new_if(args.count)))
-                .add_analyzer(Box::new(StorageAnalyzer::new_if(args.store, storage.clone())))
-        ))
-        .add_runner(Box::new(
-            ProcessRunner::new()
-                .with_id("observe-process".to_string())
-                .filter(args.process_filter.unwrap_or_else(|| "*".to_string()))
-                .add_analyzer(Box::new(ExtractAnalyzer::new_if_specified(args.extract)))
-                .add_analyzer(Box::new(FilterAnalyzer::new_if_specified(args.filter)))
-                .add_analyzer(Box::new(MergeAnalyzer::new_if(args.merge)))
-                .add_analyzer(Box::new(CountAnalyzer::new_if(args.count)))
-                .add_analyzer(Box::new(StorageAnalyzer::new_if(args.store, storage.clone())))
-        ));
+    if !args.is_empty() {
+        ssl_runner = ssl_runner.with_args(args);
+    }
     
-    // Configure merge strategy
-    orchestrator.set_merge_strategy(args.merge_strategy);
+    if enable_chunk_merger {
+        ssl_runner = ssl_runner.add_analyzer(Box::new(ChunkMerger::new_with_timeout(30000)));
+    }
     
-    // Start all runners
-    orchestrator.start_all().await?;
+    ssl_runner = ssl_runner
+        .add_analyzer(Box::new(FileLogger::new("ssl.log").unwrap()))
+        .add_analyzer(Box::new(OutputAnalyzer::new()));
     
-    // Handle output
-    match args.output {
-        Some(OutputMode::File) => {
-            let merged_stream = orchestrator.get_merged_stream().await?;
-            OutputHandler::new(OutputMode::File("observe.json".to_string()))
-                .handle(merged_stream).await?;
-        },
-        _ => {
-            let merged_stream = orchestrator.get_merged_stream().await?;
-            OutputHandler::new(args.output.unwrap_or(OutputMode::Pretty))
-                .handle(merged_stream).await?;
-        }
+    let mut stream = ssl_runner.run().await?;
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
     }
     
     Ok(())
 }
 ```
 
-### 2. API Mode (SSL Only)
+### Process Command
+
 ```rust
-// agent-tracer api --port 443 --filter "tls_version:1.3" --merge --store
-pub async fn run_api_command(args: ApiArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let storage = if args.store { 
-        Some(InMemoryStorage::shared()) 
-    } else { 
-        None 
-    };
+// agent-tracer process -- --pid 1234
+async fn run_raw_process(binary_extractor: &BinaryExtractor, args: &Vec<String>) -> Result<(), RunnerError> {
+    let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
+        .with_id("process-raw".to_string());
     
-    let mut runner = SslRunner::new()
-        .with_id("api-ssl".to_string())
-        .port(args.port.unwrap_or(443))
-        .interface(args.interface.unwrap_or_else(|| "any".to_string()));
-    
-    // Add analyzers based on flags
-    if args.raw {
-        runner = runner.add_analyzer(Box::new(RawAnalyzer::new()));
+    if !args.is_empty() {
+        process_runner = process_runner.with_args(args);
     }
     
-    if let Some(extract_fields) = args.extract {
-        runner = runner.add_analyzer(Box::new(ExtractAnalyzer::new(
-            extract_fields.split(',').map(|s| s.to_string()).collect()
-        )));
-    }
+    process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
     
-    if let Some(filter_expr) = args.filter {
-        runner = runner.add_analyzer(Box::new(FilterAnalyzer::new(filter_expr)));
+    let mut stream = process_runner.run().await?;
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
     }
-    
-    if args.merge {
-        runner = runner.add_analyzer(Box::new(MergeAnalyzer::new()));
-    }
-    
-    if args.count {
-        runner = runner.add_analyzer(Box::new(CountAnalyzer::new()));
-    }
-    
-    if let Some(storage) = storage {
-        runner = runner.add_analyzer(Box::new(StorageAnalyzer::new(storage)));
-    }
-    
-    // Run and handle output
-    let stream = runner.run().await?;
-    OutputHandler::new(args.output.unwrap_or(OutputMode::Pretty))
-        .handle(stream).await?;
     
     Ok(())
 }
 ```
 
-### 3. Process Mode (System Only)
-```rust
-// agent-tracer process --name "python" --cpu-threshold 80.0 --extract "pid,cpu,memory"
-pub async fn run_process_command(args: ProcessArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let storage = if args.store { 
-        Some(InMemoryStorage::shared()) 
-    } else { 
-        None 
-    };
-    
-    let mut runner = ProcessRunner::new()
-        .with_id("process-monitor".to_string());
-    
-    // Configure process filtering
-    if let Some(pid) = args.pid {
-        runner = runner.pid(pid);
-    }
-    
-    if let Some(name) = args.name {
-        runner = runner.name_filter(name);
-    }
-    
-    if let Some(cpu_threshold) = args.cpu_threshold {
-        runner = runner.cpu_threshold(cpu_threshold);
-    }
-    
-    if let Some(memory_threshold) = args.memory_threshold {
-        runner = runner.memory_threshold(memory_threshold);
-    }
-    
-    // Add analyzers based on flags
-    if args.raw {
-        runner = runner.add_analyzer(Box::new(RawAnalyzer::new()));
-    }
-    
-    if let Some(extract_fields) = args.extract {
-        runner = runner.add_analyzer(Box::new(ExtractAnalyzer::new(
-            extract_fields.split(',').map(|s| s.to_string()).collect()
-        )));
-    }
-    
-    if let Some(filter_expr) = args.filter {
-        runner = runner.add_analyzer(Box::new(FilterAnalyzer::new(filter_expr)));
-    }
-    
-    if args.merge {
-        runner = runner.add_analyzer(Box::new(MergeAnalyzer::new()));
-    }
-    
-    if args.count {
-        runner = runner.add_analyzer(Box::new(CountAnalyzer::new()));
-    }
-    
-    if let Some(storage) = storage {
-        runner = runner.add_analyzer(Box::new(StorageAnalyzer::new(storage)));
-    }
-    
-    // Run and handle output
-    let stream = runner.run().await?;
-    OutputHandler::new(args.output.unwrap_or(OutputMode::Pretty))
-        .handle(stream).await?;
-    
-    Ok(())
-}
-```
+### Agent Command (Concurrent SSL + Process)
 
-### 4. Server Mode
 ```rust
-// agent-tracer server --bind 0.0.0.0:8080 --enable-ssl --enable-process --cors
-pub async fn run_server_command(args: ServerArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let storage = InMemoryStorage::new(args.max_events);
-    let mut orchestrator = RunnerOrchestrator::new(Arc::new(storage.clone()));
-    
-    // Add default runners if enabled
-    if args.enable_ssl {
-        orchestrator = orchestrator.add_runner(Box::new(
-            SslRunner::new()
-                .with_id("server-ssl".to_string())
-                .port(args.ssl_port.unwrap_or(443))
-                .add_analyzer(Box::new(StorageAnalyzer::new(Arc::new(storage.clone()))))
-        ));
+// agent-tracer agent --comm python --pid 1234
+async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, pid: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+    // Build arguments for filtering
+    let mut args = Vec::new();
+    if let Some(comm_filter) = comm {
+        args.push("-c".to_string());
+        args.push(comm_filter.to_string());
+    }
+    if let Some(pid_filter) = pid {
+        args.push("-p".to_string());
+        args.push(pid_filter.to_string());
     }
     
-    if args.enable_process {
-        orchestrator = orchestrator.add_runner(Box::new(
-            ProcessRunner::new()
-                .with_id("server-process".to_string())
-                .filter(args.process_filter.unwrap_or_else(|| "*".to_string()))
-                .add_analyzer(Box::new(StorageAnalyzer::new(Arc::new(storage.clone()))))
-        ));
-    }
-    
-    // Start enabled runners
-    if args.enable_ssl || args.enable_process {
-        orchestrator.start_all().await?;
-    }
-    
-    // Configure and start server
-    let server = ObservabilityServer::new(
-        Arc::new(Mutex::new(orchestrator)),
-        Arc::new(storage),
-        args.bind
-    )
-    .enable_cors(args.cors)
-    .static_directory(args.static_dir);
-    
-    println!("Starting server on {}", args.bind);
-    server.start().await?;
-    
-    Ok(())
-}
-```
-
-### 5. Dynamic Commands
-```rust
-// agent-tracer dyn start ssl --id custom-ssl --config '{"port": 8443}'
-pub async fn run_dyn_command(args: DynCommands) -> Result<(), Box<dyn std::error::Error>> {
-    let client = ApiClient::new("http://localhost:8080")?; // Connect to running server
-    
-    match args {
-        DynCommands::List => {
-            let runners = client.list_runners().await?;
-            println!("Active runners:");
-            for runner in runners {
-                println!("  {} ({}): {:?}", runner.id, runner.name, runner.status);
-            }
-        },
+    // Spawn both runners concurrently
+    let ssl_handle = tokio::spawn(async move {
+        let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path)
+            .with_id("ssl-both".to_string())
+            .with_args(&args)
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
         
-        DynCommands::Start { runner_type, id, config } => {
-            let runner_config = config.unwrap_or_else(|| "{}".to_string());
-            match runner_type {
-                RunnerType::Ssl => {
-                    client.start_ssl_runner(&id, &runner_config).await?;
-                    println!("Started SSL runner: {}", id);
-                },
-                RunnerType::Process => {
-                    client.start_process_runner(&id, &runner_config).await?;
-                    println!("Started process runner: {}", id);
-                },
-            }
-        },
-        
-        DynCommands::Stop { id } => {
-            client.stop_runner(&id).await?;
-            println!("Stopped runner: {}", id);
-        },
-        
-        DynCommands::Status { id } => {
-            if let Some(runner_id) = id {
-                let status = client.get_runner_status(&runner_id).await?;
-                println!("Runner {}: {:?}", runner_id, status);
-            } else {
-                let all_status = client.get_all_runner_status().await?;
-                for (id, status) in all_status {
-                    println!("Runner {}: {:?}", id, status);
+        match ssl_runner.run().await {
+            Ok(mut stream) => {
+                let mut count = 0;
+                while let Some(_event) = stream.next().await {
+                    count += 1;
                 }
+                count
             }
-        },
-        
-        DynCommands::Storage { max_events, clear } => {
-            if let Some(max) = max_events {
-                client.configure_storage_max_events(max).await?;
-                println!("Set max events to: {}", max);
+            Err(e) => {
+                println!("SSL Runner error: {}", e);
+                0
             }
-            if clear {
-                client.clear_storage().await?;
-                println!("Storage cleared");
-            }
-        },
-    }
+        }
+    });
     
+    let process_handle = tokio::spawn(async move {
+        let mut process_runner = ProcessRunner::from_binary_extractor(process_path)
+            .with_id("process".to_string())
+            .with_args(&args)
+            .add_analyzer(Box::new(OutputAnalyzer::new()));
+        
+        match process_runner.run().await {
+            Ok(mut stream) => {
+                let mut count = 0;
+                while let Some(_event) = stream.next().await {
+                    count += 1;
+                }
+                count
+            }
+            Err(e) => {
+                println!("Process Runner error: {}", e);
+                0
+            }
+        }
+    });
+    
+    let (ssl_count, process_count) = tokio::try_join!(ssl_handle, process_handle)?;
+    
+    println!("Both runners completed!");
+    println!("SSL events: {}", ssl_count);
+    println!("Process events: {}", process_count);
+    
+    Ok(())
+}
+```
+
+### Combined Command
+
+```rust
+// agent-tracer combined --ssl-binary /path/to/sslsniff --ssl-args "--port 443" --ssl-args "--port 8443"
+async fn run_combined(binary_extractor: &BinaryExtractor, ssl_binary_path: Option<&str>, process_binary_path: Option<&str>, ssl_args: Vec<String>, process_args: Vec<String>, comm: Option<&str>, pid: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut combined_runner = CombinedRunner::new();
+
+    if let Some(ssl_binary) = ssl_binary_path {
+        combined_runner = combined_runner.add_runner(Box::new(SslRunner::from_binary_extractor(ssl_binary)
+            .with_id("ssl-port-443".to_string())
+            .with_args(vec!["--port", "443"])));
+    }
+    if let Some(process_binary) = process_binary_path {
+        combined_runner = combined_runner.add_runner(Box::new(ProcessRunner::from_binary_extractor(process_binary)
+            .with_id("process-pid-1234".to_string())
+            .with_args(vec!["--pid", "1234"])));
+    }
+
+    if let Some(comm_filter) = comm {
+        combined_runner = combined_runner.with_comm_filter(comm_filter.to_string());
+    }
+    if let Some(pid_filter) = pid {
+        combined_runner = combined_runner.with_pid_filter(pid_filter);
+    }
+
+    let mut stream = combined_runner.run().await?;
+    while let Some(event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
+        // Each event is tagged with the combined runner ID
+    }
+
     Ok(())
 }
 ```
@@ -885,25 +1161,38 @@ pub async fn run_dyn_command(args: DynCommands) -> Result<(), Box<dyn std::error
 ## Usage Examples
 
 ```bash
-# Combined monitoring with time-ordered merging
-agent-tracer observe --merge --store --extract "host,pid,cpu" --merge-strategy time-ordered
+# SSL traffic analysis with chunk merging
+agent-tracer ssl --sse-merge -- --port 443 --interface eth0
 
-# SSL-only monitoring with filtering  
-agent-tracer api --port 443 --filter "tls_version:1.3" --merge --store
+# SSL traffic analysis with raw output
+agent-tracer ssl -- --port 8443
 
-# Process monitoring with thresholds
-agent-tracer process --name "python" --cpu-threshold 80.0 --extract "pid,cpu,memory"
+# Process monitoring with specific PID
+agent-tracer process -- --pid 1234
 
-# Start server with both runners enabled
-agent-tracer server --bind 0.0.0.0:8080 --enable-ssl --enable-process --cors
+# Process monitoring with custom arguments
+agent-tracer process -- -c python -p 5678
 
-# Dynamically manage runners
-agent-tracer dyn list
-agent-tracer dyn start ssl --id custom-ssl --config '{"port": 8443, "interface": "eth0"}'
-agent-tracer dyn start process --id high-cpu --config '{"cpu_threshold": 90.0}'
-agent-tracer dyn stop custom-ssl
-agent-tracer dyn status
-agent-tracer dyn storage --max-events 100000 --clear
+# Agent mode - both SSL and process monitoring concurrently
+agent-tracer agent --comm python --pid 1234
+
+# Agent mode with command filtering
+agent-tracer agent -c "node,python" -p 5678
+
+# Agent mode with just PID filtering
+agent-tracer agent -p 1234
+
+# Agent mode with just command filtering
+agent-tracer agent -c python
+
+# Combined mode - multiple SSL runners
+agent-tracer combined --ssl-binary /path/to/sslsniff --ssl-args "--port 443" --ssl-args "--port 8443"
+
+# Combined mode - multiple process runners
+agent-tracer combined --process-binary /path/to/process --process-args "--pid 1234" --process-args "--pid 5678"
+
+# Combined mode - SSL and Process runners with filtering
+agent-tracer combined --ssl-binary /path/to/sslsniff --ssl-args "--port 443" --process-binary /path/to/process --process-args "--pid 1234" --comm "node,python"
 ```
 
 This redesign provides clean, focused subcommands where each has a clear purpose and intuitive configuration options!
