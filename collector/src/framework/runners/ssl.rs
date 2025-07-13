@@ -13,6 +13,7 @@ pub struct SslRunner {
     config: SslConfig,
     analyzers: Vec<Box<dyn Analyzer>>,
     executor: BinaryExecutor,
+    additional_args: Vec<String>,
 }
 
 impl SslRunner {
@@ -24,6 +25,7 @@ impl SslRunner {
             config: SslConfig::default(),
             analyzers: Vec::new(),
             executor: BinaryExecutor::new(path_str),
+            additional_args: Vec::new(),
         }
     }
 
@@ -33,7 +35,17 @@ impl SslRunner {
         self
     }
 
-
+    /// Add additional command-line arguments to pass to the binary
+    pub fn with_args<I, S>(mut self, args: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.additional_args = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+        // Update the executor with the additional args
+        self.executor = self.executor.with_args(&self.additional_args);
+        self
+    }
 
     /// Set the TLS version filter
     #[allow(dead_code)]
