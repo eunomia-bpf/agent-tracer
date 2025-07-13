@@ -31,7 +31,7 @@ struct {
 } tracked_pids SEC(".maps");
 
 const volatile unsigned long long min_duration_ns = 0;
-const volatile bool trace_all_processes = false;
+const volatile int filter_mode = 1; /* Default to FILTER_MODE_PROC */
 
 /* Context structure for filter checking */
 struct filter_check_ctx {
@@ -68,13 +68,9 @@ static int check_filter_callback(__u32 index, void *ctx)
 	return 0; /* continue loop */
 }
 
-static __always_inline bool should_trace_process(const char *comm, pid_t pid, pid_t ppid)
+static __always_inline bool add_to_tracked_pids(const char *comm, pid_t pid, pid_t ppid)
 {
 	struct pid_info *parent_info;
-
-	/* If tracing all processes, always return true */
-	if (trace_all_processes)
-		return true;
 
 	/* First check if this PID is already being tracked */
 	struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
@@ -92,6 +88,7 @@ static __always_inline bool should_trace_process(const char *comm, pid_t pid, pi
 			.is_tracked = true
 		};
 		bpf_map_update_elem(&tracked_pids, &pid, &new_pid_info, BPF_ANY);
+		bpf_printk("add_to_tracked_pids: %s %d %d\n", comm, pid, ppid);
 		return true;
 	}
 
@@ -102,25 +99,14 @@ static __always_inline bool should_trace_process(const char *comm, pid_t pid, pi
 		.ppid = ppid,
 		.found_match = false
 	};
-	
-	bpf_loop(MAX_COMMAND_FILTERS, check_filter_callback, &filter_ctx, 0);
-	
-	return filter_ctx.found_match;
-}
 
-/* Helper function to check if any PIDs are being tracked */
-static __always_inline bool has_tracked_pids(void)
-{
-	struct pid_info *info;
-	pid_t test_pid = 1; /* Use a dummy PID for iteration */
-	
-	/* If tracing all processes, always allow bash tracing */
-	if (trace_all_processes)
+	bpf_loop(MAX_COMMAND_FILTERS, check_filter_callback, &filter_ctx, 0);
+	if (filter_ctx.found_match) {
+		bpf_printk("add_to_tracked_pids: %s %d %d\n", comm, pid, ppid);
 		return true;
-	
-	/* Check if tracked_pids map has any entries */
-	/* This is a simple heuristic - we could make it more sophisticated */
-	return bpf_map_lookup_elem(&tracked_pids, &test_pid) != NULL;
+	}
+
+	return false;
 }
 
 /* Bash readline uretprobe handler */
@@ -139,14 +125,10 @@ int BPF_URETPROBE(bash_readline, const void *ret)
 	if (comm[0] != 'b' || comm[1] != 'a' || comm[2] != 's' || comm[3] != 'h' || comm[4] != 0)
 		return 0;
 
-	/* Only trace bash commands if we have tracked PIDs or tracing all */
-	if (!has_tracked_pids())
-		return 0;
-
 	pid = bpf_get_current_pid_tgid() >> 32;
 
-	/* If not tracing all processes, check if this specific PID should be traced */
-	if (!trace_all_processes) {
+	/* Check filter mode for bash tracing */
+	if (filter_mode == 2) { /* FILTER_MODE_FILTER */
 		struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
 		if (!pid_info || !pid_info->is_tracked)
 			return 0;
@@ -188,9 +170,24 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 	bpf_get_current_comm(&comm, sizeof(comm));
 	pid_t ppid = BPF_CORE_READ(task, real_parent, tgid);
 
-	/* Check if we should trace this process */
-	if (!should_trace_process(comm, pid, ppid))
-		return 0;
+	/* Check if we should trace this process based on filter mode */
+	if (filter_mode == 0) { /* FILTER_MODE_ALL or FILTER_MODE_PROC */
+		/* Always add to tracked pids for these modes */
+		struct pid_info new_pid_info = {
+			.pid = pid,
+			.ppid = ppid,
+			.is_tracked = true
+		};
+		bpf_map_update_elem(&tracked_pids, &pid, &new_pid_info, BPF_ANY);
+	} else { /* FILTER_MODE_FILTER */
+		/* Use original filtering logic */
+		bool is_tracked = add_to_tracked_pids(comm, pid, ppid);
+		if (filter_mode == 2 && !is_tracked) {
+			// if we're in filter mode and the process is not tracked,
+			// don't trace it
+			return 0;
+		}
+	}
 
 	/* remember time exec() was executed for this PID */
 	pid = bpf_get_current_pid_tgid() >> 32;
@@ -240,8 +237,8 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	if (pid != tid)
 		return 0;
 
-	/* Check if this PID is being tracked (or trace all processes) */
-	if (!trace_all_processes) {
+	/* Check if this PID is being tracked based on filter mode */
+	if (filter_mode == 2) { /* FILTER_MODE_FILTER */
 		struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
 		if (!pid_info || !pid_info->is_tracked)
 			return 0;
@@ -276,8 +273,7 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
 	/* Remove from tracked PIDs on exit if not tracing all */
-	if (!trace_all_processes)
-		bpf_map_delete_elem(&tracked_pids, &pid);
+	bpf_map_delete_elem(&tracked_pids, &pid);
 
 	/* send data to user-space for post-processing */
 	bpf_ringbuf_submit(e, 0);
@@ -287,13 +283,12 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 /* Helper function to check if PID should be tracked for file operations */
 static __always_inline bool should_trace_file_ops(pid_t pid)
 {
-	/* If tracing all processes, always trace */
-	if (trace_all_processes)
-		return true;
-
-	/* Check if this PID is being tracked */
+	/* Check if PID is tracked */
 	struct pid_info *pid_info = bpf_map_lookup_elem(&tracked_pids, &pid);
-	return (pid_info && pid_info->is_tracked);
+	if (!pid_info || !pid_info->is_tracked)
+		return false;
+
+	return true;
 }
 
 /* Syscall tracepoint for openat */

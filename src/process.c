@@ -18,29 +18,41 @@ static struct env {
 	long min_duration_ms;
 	char *command_list[MAX_COMMAND_LIST];
 	int command_count;
-	bool trace_all;
-} env;
+	enum filter_mode filter_mode;
+} env = {
+	.verbose = false,
+	.min_duration_ms = 0,
+	.command_count = 0,
+	.filter_mode = FILTER_MODE_PROC
+};
 
 const char *argp_program_version = "process-tracer 1.0";
 const char *argp_program_bug_address = "<bpf@vger.kernel.org>";
 const char argp_program_doc[] =
-"BPF process tracer with command filtering.\n"
+"BPF process tracer with 3-level filtering.\n"
 "\n"
-"It traces process start and exits for specified commands and their subprocesses.\n"
+"It traces process start and exits with configurable filtering levels.\n"
 "Shows associated information (filename, process duration, PID and PPID, etc).\n"
-"By default, traces ALL processes if no commands are specified.\n"
 "\n"
-"USAGE: ./process [-d <min-duration-ms>] [-c <command1,command2,...>] [-v]\n"
+"USAGE: ./process [-d <min-duration-ms>] [-c <command1,command2,...>] [-m <mode>] [-v]\n"
+"\n"
+"FILTER MODES:\n"
+"  0 (all):    Trace all processes and all read/write operations\n"
+"  1 (proc):   Trace all processes but only read/write for tracked PIDs\n"
+"  2 (filter): Only trace processes matching filters and their read/write (default)\n"
 "\n"
 "EXAMPLES:\n"
-"  ./process                        # Trace all processes\n"
-"  ./process -c \"claude,python\"  # Trace processes containing 'claude' or 'python'\n"
-"  ./process -c \"ssh\" -d 1000   # Trace ssh processes lasting > 1 second\n";
+"  ./process -m 0                   # Trace everything\n"
+"  ./process -m 1                   # Trace all processes, selective read/write\n"
+"  ./process -c \"claude,python\"    # Trace only claude/python processes\n"
+"  ./process -c \"ssh\" -d 1000     # Trace ssh processes lasting > 1 second\n";
 
 static const struct argp_option opts[] = {
 	{ "verbose", 'v', NULL, 0, "Verbose debug output" },
 	{ "duration", 'd', "DURATION-MS", 0, "Minimum process duration (ms) to report" },
-	{ "commands", 'c', "COMMAND-LIST", 0, "Comma-separated list of commands to trace (e.g., \"claude,python\"). If not specified, traces all processes." },
+	{ "commands", 'c', "COMMAND-LIST", 0, "Comma-separated list of commands to trace (e.g., \"claude,python\")" },
+	{ "mode", 'm', "FILTER-MODE", 0, "Filter mode: 0=all, 1=proc, 2=filter (default=2)" },
+	{ "all", 'a', NULL, 0, "Deprecated: use -m 0 instead" },
 	{},
 };
 
@@ -60,6 +72,18 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 			fprintf(stderr, "Invalid duration: %s\n", arg);
 			argp_usage(state);
 		}
+		break;
+	case 'a':
+		env.filter_mode = FILTER_MODE_ALL;
+		break;
+	case 'm':
+		errno = 0;
+		int mode = strtol(arg, NULL, 10);
+		if (errno || mode < 0 || mode > 2) {
+			fprintf(stderr, "Invalid filter mode: %s (must be 0, 1, or 2)\n", arg);
+			argp_usage(state);
+		}
+		env.filter_mode = (enum filter_mode)mode;
 		break;
 	case 'c':
 		/* Parse comma-separated command list */
@@ -136,7 +160,7 @@ static int setup_command_filters(struct process_bpf *skel, char **command_list, 
 }
 
 /* Populate initial PIDs in the eBPF map from existing processes */
-static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, bool trace_all, pid_t **tracked_pids_out)
+static int populate_initial_pids(struct process_bpf *skel, char **command_list, int command_count, enum filter_mode filter_mode, pid_t **tracked_pids_out)
 {
 	DIR *proc_dir;
 	struct dirent *entry;
@@ -169,10 +193,10 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 		if (read_proc_ppid(pid, &ppid) != 0)
 			continue;
 		
-		bool should_track = trace_all;
+		bool should_track = (filter_mode == FILTER_MODE_ALL);
 		
-		/* If not tracing all, check if this process matches any configured filter */
-		if (!trace_all && command_list && command_count > 0) {
+		/* If using filter mode, check if this process matches any configured filter */
+		if (filter_mode == FILTER_MODE_FILTER && command_list && command_count > 0) {
 			should_track = false;
 			for (int i = 0; i < command_count; i++) {
 				if (command_matches_filter(comm, command_list[i])) {
@@ -192,7 +216,7 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 			
 			int err = bpf_map__update_elem(skel->maps.tracked_pids, &pid, sizeof(pid),
 			                               &pid_info, sizeof(pid_info), BPF_ANY);
-			if (err && !trace_all) {  /* Don't spam errors when tracing all processes */
+			if (err && filter_mode != FILTER_MODE_ALL) {  /* Don't spam errors when tracing all processes */
 				fprintf(stderr, "Failed to add PID %d to tracked list: %d\n", pid, err);
 			}
 			if (!err) {
@@ -280,8 +304,7 @@ int main(int argc, char **argv)
 	if (err)
 		return err;
 
-	/* Determine if we should trace all processes (default if no commands specified) */
-	env.trace_all = (env.command_count == 0);
+	/* filter_mode is set via -m flag or -a flag, defaults to FILTER_MODE_FILTER */
 
 	/* Set up libbpf errors and debug info callback */
 	libbpf_set_print(libbpf_print_fn);
@@ -297,12 +320,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* Parameterize BPF code with minimum duration parameter */
+	/* Parameterize BPF code with minimum duration and filter mode */
 	skel->rodata->min_duration_ns = env.min_duration_ms * 1000000ULL;
-	skel->rodata->trace_all_processes = env.trace_all;
+	skel->rodata->filter_mode = env.filter_mode;
 
-	/* Setup command filters if not tracing all */
-	if (!env.trace_all) {
+	/* Setup command filters if using filter mode */
+	if (env.filter_mode == FILTER_MODE_FILTER) {
 		err = setup_command_filters(skel, env.command_list, env.command_count);
 		if (err) {
 			fprintf(stderr, "Failed to setup command filters\n");
@@ -318,15 +341,15 @@ int main(int argc, char **argv)
 
 	/* Populate initial PIDs from existing processes */
 	pid_t *tracked_pids_array;
-	int tracked_count = populate_initial_pids(skel, env.command_list, env.command_count, env.trace_all, &tracked_pids_array);
+	int tracked_count = populate_initial_pids(skel, env.command_list, env.command_count, env.filter_mode, &tracked_pids_array);
 	if (tracked_count < 0) {
 		fprintf(stderr, "Failed to populate initial PIDs\n");
 		goto cleanup;
 	}
 	
 	/* Output configuration as JSON */
-	printf("{\"type\":\"config\",\"trace_all\":%s,\"min_duration_ms\":%ld,\"commands\":[", 
-	       env.trace_all ? "true" : "false", env.min_duration_ms);
+	printf("{\"type\":\"config\",\"filter_mode\":%d,\"min_duration_ms\":%ld,\"commands\":[", 
+	       env.filter_mode, env.min_duration_ms);
 	for (int i = 0; i < env.command_count; i++) {
 		printf("\"%s\"%s", env.command_list[i], 
 		       (i < env.command_count - 1) ? "," : "");
