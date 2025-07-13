@@ -12,15 +12,23 @@ Analyzes SSL log files to:
 import json
 import sys
 import re
+import argparse
+import os
 from collections import defaultdict, OrderedDict
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 
 class SSLLogAnalyzer:
-    def __init__(self, log_file: str):
+    def __init__(self, log_file: str, quiet: bool = False):
         self.log_file = log_file
+        self.quiet = quiet
         self.all_entries = []  # All parsed entries with timestamps
         self.timeline = []  # Simple chronological timeline
+        
+    def debug_print(self, message: str):
+        """Print debug message only if not in quiet mode"""
+        if not self.quiet:
+            print(message)
         
     def parse_http_data(self, data: str) -> Dict[str, Any]:
         """Parse HTTP request/response data"""
@@ -165,7 +173,7 @@ class SSLLogAnalyzer:
         current_sse_response = None
         sse_merge_timeout = 5000000000  # 5 seconds in nanoseconds
         
-        print(f"Processing {len(sorted_entries)} entries...")
+        self.debug_print(f"Processing {len(sorted_entries)} entries...")
         
         for entry in sorted_entries:
             entry_type = entry.get('type')
@@ -175,7 +183,7 @@ class SSLLogAnalyzer:
             if entry_type == 'request':
                 # Finalize any pending SSE response before processing new request
                 if current_sse_response:
-                    print(f"[DEBUG] Finalizing SSE response due to new request")
+                    self.debug_print(f"[DEBUG] Finalizing SSE response due to new request")
                     self._finalize_sse_response(current_sse_response)
                     current_sse_response = None
                     
@@ -185,20 +193,20 @@ class SSLLogAnalyzer:
             elif entry_type == 'response':
                 # Finalize any pending SSE response before processing new response
                 if current_sse_response:
-                    print(f"[DEBUG] Finalizing SSE response due to new response")
+                    self.debug_print(f"[DEBUG] Finalizing SSE response due to new response")
                     self._finalize_sse_response(current_sse_response)
                     current_sse_response = None
                     
                 if self.is_sse_response(entry):
                     # This is an SSE response, prepare for chunk merging
-                    print(f"[DEBUG] Found SSE response at timestamp {timestamp}")
+                    self.debug_print(f"[DEBUG] Found SSE response at timestamp {timestamp}")
                     entry['sse_text_parts'] = []
                     entry['sse_raw_chunks'] = []  # Store original chunks for debugging
                     # Extract any initial SSE events from the response body
                     if 'body' in entry:
                         initial_text = self._extract_sse_events_from_body(entry)
                         if initial_text:
-                            print(f"[DEBUG] Extracted initial text from response: '{initial_text}'")
+                            self.debug_print(f"[DEBUG] Extracted initial text from response: '{initial_text}'")
                     current_sse_response = entry
                     
                 # Add response to timeline
@@ -210,7 +218,7 @@ class SSLLogAnalyzer:
                     time_since_response = timestamp - current_sse_response.get('timestamp', 0)
                     
                     if time_since_response <= sse_merge_timeout:
-                        print(f"[DEBUG] Processing SSE chunk at timestamp {timestamp} (TID: {tid})")
+                        self.debug_print(f"[DEBUG] Processing SSE chunk at timestamp {timestamp} (TID: {tid})")
                         
                         # Store the raw chunk for debugging
                         current_sse_response['sse_raw_chunks'].append({
@@ -232,25 +240,25 @@ class SSLLogAnalyzer:
                                             current_sse_response['sse_text_parts'].append(text)
                         
                         if chunk_text_parts:
-                            print(f"[DEBUG] Extracted text from chunk: {chunk_text_parts}")
+                            self.debug_print(f"[DEBUG] Extracted text from chunk: {chunk_text_parts}")
                         
                         # Update response timestamp to latest chunk
                         current_sse_response['timestamp'] = timestamp
                     else:
                         # Timeout reached, finalize current response
-                        print(f"[DEBUG] SSE timeout reached ({time_since_response}ns > {sse_merge_timeout}ns), finalizing")
+                        self.debug_print(f"[DEBUG] SSE timeout reached ({time_since_response}ns > {sse_merge_timeout}ns), finalizing")
                         self._finalize_sse_response(current_sse_response)
                         current_sse_response = None
                 else:
                     # No current SSE response or different TID, finalize if exists
                     if current_sse_response:
-                        print(f"[DEBUG] TID mismatch or no current SSE response, finalizing")
+                        self.debug_print(f"[DEBUG] TID mismatch or no current SSE response, finalizing")
                         self._finalize_sse_response(current_sse_response)
                         current_sse_response = None
         
         # Finalize any remaining SSE response
         if current_sse_response:
-            print(f"[DEBUG] Finalizing remaining SSE response")
+            self.debug_print(f"[DEBUG] Finalizing remaining SSE response")
             self._finalize_sse_response(current_sse_response)
         
         # Final pass: finalize any remaining SSE responses that weren't processed
@@ -261,7 +269,7 @@ class SSLLogAnalyzer:
                 sse_count += 1
         
         if sse_count > 0:
-            print(f"[DEBUG] Final pass: finalized {sse_count} remaining SSE responses")
+            self.debug_print(f"[DEBUG] Final pass: finalized {sse_count} remaining SSE responses")
             
         self.timeline = timeline
         
@@ -271,7 +279,7 @@ class SSLLogAnalyzer:
         if not body:
             return ''
             
-        print(f"[DEBUG] Extracting SSE events from response body (length: {len(body)})")
+        self.debug_print(f"[DEBUG] Extracting SSE events from response body (length: {len(body)})")
             
         # Handle chunked encoding - extract actual content from chunks
         content_parts = []
@@ -295,7 +303,7 @@ class SSLLogAnalyzer:
             
         # Join all content and parse SSE events
         full_content = '\n'.join(content_parts)
-        print(f"[DEBUG] Extracted chunked content (length: {len(full_content)})")
+        self.debug_print(f"[DEBUG] Extracted chunked content (length: {len(full_content)})")
         
         # Parse SSE events from the content
         events = self.parse_sse_events_from_chunk(full_content)
@@ -313,9 +321,9 @@ class SSLLogAnalyzer:
         
         merged_text = ''.join(extracted_texts)
         if extracted_texts:
-            print(f"[DEBUG] Found {len(extracted_texts)} text deltas in response body: {extracted_texts}")
+            self.debug_print(f"[DEBUG] Found {len(extracted_texts)} text deltas in response body: {extracted_texts}")
         else:
-            print(f"[DEBUG] No text deltas found in response body")
+            self.debug_print(f"[DEBUG] No text deltas found in response body")
             
         return merged_text
         
@@ -325,10 +333,10 @@ class SSLLogAnalyzer:
             merged_text = ''.join(sse_response['sse_text_parts'])
             raw_chunks_count = len(sse_response.get('sse_raw_chunks', []))
             
-            print(f"[DEBUG] Finalizing SSE response:")
-            print(f"  - Text parts: {sse_response['sse_text_parts']}")
-            print(f"  - Merged text: '{merged_text}'")
-            print(f"  - Raw chunks count: {raw_chunks_count}")
+            self.debug_print(f"[DEBUG] Finalizing SSE response:")
+            self.debug_print(f"  - Text parts: {sse_response['sse_text_parts']}")
+            self.debug_print(f"  - Merged text: '{merged_text}'")
+            self.debug_print(f"  - Raw chunks count: {raw_chunks_count}")
             
             if merged_text:
                 # Update the response body with merged content
@@ -337,12 +345,12 @@ class SSLLogAnalyzer:
                     # Try to parse as JSON if it looks like JSON
                     if merged_text.strip().startswith('{'):
                         sse_response['json_body'] = json.loads(merged_text)
-                        print(f"  - Parsed as JSON body")
+                        self.debug_print(f"  - Parsed as JSON body")
                 except json.JSONDecodeError:
-                    print(f"  - Not valid JSON, keeping as text")
+                    self.debug_print(f"  - Not valid JSON, keeping as text")
                     pass
             else:
-                print(f"  - No merged text, keeping original body")
+                self.debug_print(f"  - No merged text, keeping original body")
             
             # Clean up temporary SSE-specific fields but keep raw chunks for debugging
             del sse_response['sse_text_parts']
@@ -351,7 +359,35 @@ class SSLLogAnalyzer:
                 if field in sse_response:
                     del sse_response[field]
                     
-            print(f"  - Finalization complete")
+            self.debug_print(f"  - Finalization complete")
+        
+    def _create_simple_timeline(self, timeline: List[Dict[str, Any]]) -> List[str]:
+        """Create simplified timeline with just essential request/response info"""
+        simple_entries = []
+        
+        for entry in timeline:
+            entry_type = entry.get('type')
+            
+            if entry_type == 'request':
+                method = entry.get('method', 'UNKNOWN')
+                path = entry.get('path', '/')
+                protocol = entry.get('protocol', 'HTTP/1.1')
+                headers = entry.get('headers', {})
+                host = headers.get('host', 'unknown-host')
+                
+                simple_entry = f"{method} {path} {protocol} host: {host}"
+                simple_entries.append(simple_entry)
+                
+            elif entry_type == 'response':
+                status_code = entry.get('status_code', 0)
+                status_text = entry.get('status_text', '')
+                headers = entry.get('headers', {})
+                content_type = headers.get('content-type', 'unknown')
+                
+                simple_entry = f"HTTP/1.1 {status_code} {status_text} content-type: {content_type}"
+                simple_entries.append(simple_entry)
+        
+        return simple_entries
         
     def analyze(self) -> Dict[str, Any]:
         """Analyze the SSL log file"""
@@ -361,7 +397,8 @@ class SSLLogAnalyzer:
                     entry = json.loads(line.strip())
                     self.process_log_entry(entry)
                 except json.JSONDecodeError as e:
-                    print(f"Warning: Failed to parse line {line_num}: {e}", file=sys.stderr)
+                    if not self.quiet:
+                        print(f"Warning: Failed to parse line {line_num}: {e}", file=sys.stderr)
                     continue
                     
         # Create chronological timeline and merge SSE events
@@ -389,30 +426,78 @@ class SSLLogAnalyzer:
         return results
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python ssl_log_analyzer.py <ssl_log_file>", file=sys.stderr)
-        sys.exit(1)
-        
-    log_file = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="SSL Log Analyzer - Creates chronological timeline with merged SSE content",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Output formats:
+  json          - Full analysis results with metadata (default)
+  timeline      - Timeline-only JSON file
+  both          - Both full results and timeline-only files
+
+Examples:
+  python ssl_log_analyzer.py input.log
+  python ssl_log_analyzer.py input.log -o results.json
+  python ssl_log_analyzer.py input.log --format timeline -q
+  python ssl_log_analyzer.py input.log --format both -o analysis
+        """
+    )
+    
+    parser.add_argument('log_file', help='SSL log file to analyze')
+    parser.add_argument('-o', '--output', help='Output file path (without extension for --format both)')
+    parser.add_argument('--format', choices=['json', 'timeline', 'both'], default='json',
+                        help='Output format (default: json)')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help='Suppress debug output')
+    
+    args = parser.parse_args()
     
     try:
-        analyzer = SSLLogAnalyzer(log_file)
+        analyzer = SSLLogAnalyzer(args.log_file, quiet=args.quiet)
         results = analyzer.analyze()
         
-        # Write results to new JSON file
-        output_file = log_file.replace('.log', '_analyzed.json')
-        with open(output_file, 'w') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+        # Determine output file names
+        if args.output:
+            base_output = args.output
+            if base_output.endswith('.json'):
+                base_output = base_output[:-5]
+        else:
+            base_output = args.log_file.replace('.log', '_analyzed')
+        
+        # Write output based on format
+        output_files = []
+        
+        if args.format in ['json', 'both']:
+            full_output_file = f"{base_output}.json"
+            with open(full_output_file, 'w') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            output_files.append(full_output_file)
             
-        print(f"Analysis complete. Results written to: {output_file}")
-        print(f"Total timeline entries: {results['analysis_metadata']['total_timeline_entries']}")
-        print(f"Total requests: {results['analysis_metadata']['total_requests']}")
-        print(f"Total responses: {results['analysis_metadata']['total_responses']}")
-        print(f"SSE responses: {results['analysis_metadata']['sse_responses']}")
-        print(f"Total entries processed: {results['analysis_metadata']['total_entries_processed']}")
+        if args.format in ['timeline', 'both']:
+            timeline_output_file = f"{base_output}_simple_timeline.json"
+            # Create simplified timeline with just essential info
+            simple_timeline = analyzer._create_simple_timeline(results['timeline'])
+            timeline_data = {
+                'analysis_metadata': results['analysis_metadata'],
+                'simple_timeline': simple_timeline
+            }
+            with open(timeline_output_file, 'w') as f:
+                json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+            output_files.append(timeline_output_file)
+        
+        # Print summary
+        if not args.quiet:
+            print(f"Analysis complete. Output written to: {', '.join(output_files)}")
+            print(f"Total timeline entries: {results['analysis_metadata']['total_timeline_entries']}")
+            print(f"Total requests: {results['analysis_metadata']['total_requests']}")
+            print(f"Total responses: {results['analysis_metadata']['total_responses']}")
+            print(f"SSE responses: {results['analysis_metadata']['sse_responses']}")
+            print(f"Total entries processed: {results['analysis_metadata']['total_entries_processed']}")
+        
+        return output_files
         
     except FileNotFoundError:
-        print(f"Error: File '{log_file}' not found", file=sys.stderr)
+        print(f"Error: File '{args.log_file}' not found", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

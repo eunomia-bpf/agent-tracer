@@ -64,30 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Test process runner with embedded binary
-async fn run_process_real(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
-    println!("Testing Process Runner");
-    println!("{}", "=".repeat(60));
-    
-    let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
-        .with_id("process".to_string())
-        .add_analyzer(Box::new(FileLogger::new("process.log").unwrap()))
-        .add_analyzer(Box::new(OutputAnalyzer::new()));
-    
-    println!("Starting process event stream (press Ctrl+C to stop):");
-    let mut stream = process_runner.run().await?;
-    
-    // Process events as they come in - this provides real-time output
-    let mut event_count = 0;
-    while let Some(_event) = stream.next().await {
-        event_count += 1;
-        // OutputAnalyzer already prints the events, we just count them
-    }
-    
-    println!("Process Runner completed with {} events", event_count);
-    Ok(())
-}
-
 /// Test both runners with embedded binaries
 async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, pid: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing Both Runners");
@@ -175,26 +151,6 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
     println!("SSL events: {}", ssl_count);
     println!("Process events: {}", process_count);
     
-    Ok(())
-}
-
-/// Analyze SSL traffic with chunk merging as default
-async fn run_ssl_with_http_analyzer(binary_extractor: &BinaryExtractor) -> Result<(), RunnerError> {
-    let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
-        .with_id("ssl-default".to_string())
-        .add_analyzer(Box::new(ChunkMerger::new_with_timeout(30000))) // 30 second timeout for chunks
-        .add_analyzer(Box::new(FileLogger::new_with_options("ssl.log", true, true).map_err(|e| Box::new(e) as RunnerError)?)) // Log ALL events to ssl.log
-        .add_analyzer(Box::new(OutputAnalyzer::new())); // Pretty print JSON
-    
-    println!("Starting SSL traffic analysis with chunk merging (press Ctrl+C to stop):");
-    println!("Merging chunked transfer encoding fragments from SSL traffic...");
-    let mut stream = ssl_runner.run().await?;
-    
-    // Consume the stream to actually process events
-    while let Some(_event) = stream.next().await {
-        // Events are processed by the analyzers in the chain
-    }
-
     Ok(())
 }
 
