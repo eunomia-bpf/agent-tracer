@@ -1,11 +1,9 @@
-# AgentSight
+# AgentSight: Zero‑instrumentation AI observability, powered by eBPF
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yunwei37/agent-tracer)
 
-> **Zero‑instrumentation AI observability, powered by eBPF**
-
-AgentSight is a observability framework designed specifically for monitoring AI agent behavior through SSL/TLS traffic interception and process monitoring. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead.
+AgentSight is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. *No code changes required, zero new dependencies, no new SDKs to learn.*
 
 ## 🚀 Key Advantages Over Existing Solutions
 
@@ -104,10 +102,10 @@ cd collector && cargo build --release
 
 ### General
 
-**Q: What makes AgentSight different from traditional APM tools?**  
-A: AgentSight operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
+**Q: What makes Agent Tracer different from traditional APM tools?**  
+A: Agent Tracer operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
 
-**Q: Does AgentSight impact application performance?**  
+**Q: Does Agent Tracer impact application performance?**  
 A: Minimal impact (<3% CPU overhead). eBPF runs in kernel space with optimized data collection, avoiding the overhead of userspace monitoring.
 
 **Q: Can agents detect they're being monitored?**  
@@ -125,7 +123,7 @@ A: Yes, use the `agent` or `combined` modes to monitor multiple processes concur
 A: SSL payload capture is configurable. Enable data redaction in analyzers for production environments. See Security Considerations below.
 
 **Q: What about containers and Kubernetes?**  
-A: AgentSight works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
+A: Agent Tracer works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
 
 ### Troubleshooting
 
@@ -169,4 +167,4 @@ make debug
 
 ## 📄 License
 
-**💡 Why AgentSight?** In an era where AI agents can modify their own behavior, traditional observability falls short. AgentSight provides the independent, tamper-resistant monitoring that organizations need to safely deploy AI agents at scale.
+**💡 Why Agent Tracer?** In an era where AI agents can modify their own behavior, traditional observability falls short. Agent Tracer provides the independent, tamper-resistant monitoring that organizations need to safely deploy AI agents at scale.
