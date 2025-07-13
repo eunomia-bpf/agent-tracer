@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yunwei37/agent-tracer)
 
-AgentSight is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. *No code changes required, zero new dependencies, no new SDKs to learn.*
+AgentSight is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. *No code changes required, zero new dependencies, no new SDKs; Works for most frameworks and applications out of box.*
 
 ## 🚀 Key Advantages Over Existing Solutions
 
