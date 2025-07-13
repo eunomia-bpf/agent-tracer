@@ -1,6 +1,6 @@
 .direnv
 /build
 ecapture
-src/res.txt
+res.txt
 save.log
 test_events.log

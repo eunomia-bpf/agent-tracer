@@ -86,6 +86,7 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 		env.filter_mode = (enum filter_mode)mode;
 		break;
 	case 'c':
+		env.filter_mode = FILTER_MODE_FILTER;
 		/* Parse comma-separated command list */
 		char *arg_copy = strdup(arg);
 		if (!arg_copy) {
