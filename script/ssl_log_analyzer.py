@@ -233,11 +233,15 @@ class SSLLogAnalyzer:
                             if event.get('event') == 'content_block_delta':
                                 if 'parsed_data' in event:
                                     delta = event['parsed_data'].get('delta', {})
+                                    text = ''
                                     if delta.get('type') == 'text_delta':
                                         text = delta.get('text', '')
-                                        if text:
-                                            chunk_text_parts.append(text)
-                                            current_sse_response['sse_text_parts'].append(text)
+                                    elif delta.get('type') == 'thinking_delta':
+                                        text = delta.get('thinking', '')
+                                    
+                                    if text:
+                                        chunk_text_parts.append(text)
+                                        current_sse_response['sse_text_parts'].append(text)
                         
                         if chunk_text_parts:
                             self.debug_print(f"[DEBUG] Extracted text from chunk: {chunk_text_parts}")
@@ -313,11 +317,15 @@ class SSLLogAnalyzer:
             if event.get('event') == 'content_block_delta':
                 if 'parsed_data' in event:
                     delta = event['parsed_data'].get('delta', {})
+                    text = ''
                     if delta.get('type') == 'text_delta':
                         text = delta.get('text', '')
-                        if text:
-                            extracted_texts.append(text)
-                            response['sse_text_parts'].append(text)
+                    elif delta.get('type') == 'thinking_delta':
+                        text = delta.get('thinking', '')
+                    
+                    if text:
+                        extracted_texts.append(text)
+                        response['sse_text_parts'].append(text)
         
         merged_text = ''.join(extracted_texts)
         if extracted_texts:

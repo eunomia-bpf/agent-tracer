@@ -26,17 +26,17 @@ echo ""
 
 # Step 1: Run basic SSL log analyzer
 echo "Step 1: Running SSL log analyzer..."
-python3 "$SCRIPT_DIR/ssl_log_analyzer.py" "$LOG_FILE" -o "$ANALYSIS_DIR/ssl_timeline" --format both -q
+python3 "$SCRIPT_DIR/ssl_log_analyzer.py" "$LOG_FILE" -o "$ANALYSIS_DIR/ssl_timeline" --format both
 echo "✓ Timeline analysis complete"
 
 # Step 2: Run deep analysis (headers and metrics)
 echo "Step 2: Running header and metrics analysis..."
-python3 "$SCRIPT_DIR/ssl_header_metrics_analyzer.py" "$ANALYSIS_DIR/ssl_timeline.json" -o "$ANALYSIS_DIR/ssl_analysis_report.json" -q
+python3 "$SCRIPT_DIR/ssl_header_metrics_analyzer.py" "$ANALYSIS_DIR/ssl_timeline.json" -o "$ANALYSIS_DIR/ssl_analysis_report.json"
 echo "✓ Header and metrics analysis complete"
 
 # Step 3: Generate data timeline without handshake
 echo "Step 3: Generating clean data timeline..."
-python3 "$SCRIPT_DIR/ssl_data_timeline.py" "$ANALYSIS_DIR/ssl_timeline.json" -o "$ANALYSIS_DIR/ssl_data_only.json" -q
+python3 "$SCRIPT_DIR/ssl_data_timeline.py" "$ANALYSIS_DIR/ssl_timeline.json" -o "$ANALYSIS_DIR/ssl_data_only.json"
 echo "✓ Data timeline generation complete"
 
 echo ""

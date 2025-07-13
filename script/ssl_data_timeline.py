@@ -3,10 +3,11 @@
 SSL Data Timeline Generator - Creates a clean timeline with only data transfers
 
 Filters out SSL handshake operations and focuses on:
-1. HTTP request/response data only
-2. Application-level communications
+1. HTTP request/response data only (no headers)
+2. Application-level communications with SSE content
 3. Clean chronological data flow
 4. Actual payload transfers without protocol overhead
+5. Includes SSE raw chunks without complex request-response matching
 """
 
 import json
@@ -198,47 +199,8 @@ class SSLDataTimelineGenerator:
         return filtered
         
     def add_data_flow_context(self, filtered_timeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Add context about data flow patterns"""
-        self.debug_print("Adding data flow context...")
-        
-        # Group related requests and responses
-        request_response_pairs = {}
-        
-        for entry in filtered_timeline:
-            tid = entry.get('tid')
-            entry_type = entry.get('type')
-            
-            if tid:
-                if tid not in request_response_pairs:
-                    request_response_pairs[tid] = {}
-                    
-                request_response_pairs[tid][entry_type] = entry
-                
-        # Add flow context to entries
-        for entry in filtered_timeline:
-            tid = entry.get('tid')
-            entry_type = entry.get('type')
-            
-            if tid in request_response_pairs:
-                pair = request_response_pairs[tid]
-                
-                # Add request context to response
-                if entry_type == 'response' and 'request' in pair:
-                    request = pair['request']
-                    entry['request_context'] = {
-                        'method': request.get('method'),
-                        'path': request.get('path'),
-                        'has_body': bool(request.get('body'))
-                    }
-                    
-                # Add response context to request
-                elif entry_type == 'request' and 'response' in pair:
-                    response = pair['response']
-                    entry['response_context'] = {
-                        'status_code': response.get('status_code'),
-                        'has_body': bool(response.get('body'))
-                    }
-        
+        """Add context about data flow patterns - DEPRECATED: Simplified to avoid complexity"""
+        # This function is no longer used to keep the clean timeline simple
         return filtered_timeline
         
     def generate_summary(self, filtered_timeline: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -298,8 +260,8 @@ class SSLDataTimelineGenerator:
         timeline = self.load_timeline_data()
         filtered_timeline = self.filter_timeline(timeline)
         
-        # Add context
-        filtered_timeline = self.add_data_flow_context(filtered_timeline)
+        # Skip complex request-response matching for simplicity
+        # Just keep the SSE data as-is
         
         # Generate summary
         summary = self.generate_summary(filtered_timeline)

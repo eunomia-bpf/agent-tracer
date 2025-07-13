@@ -1,12 +1,12 @@
 {
   "analysis_metadata": {
-    "timestamp": "2025-07-13T07:53:38.343747",
+    "timestamp": "2025-07-13T08:17:31.011774",
     "source_file": "../collector/ssl.log",
-    "total_timeline_entries": 1037,
-    "total_requests": 521,
-    "total_responses": 516,
+    "total_timeline_entries": 1043,
+    "total_requests": 525,
+    "total_responses": 518,
     "sse_responses": 62,
-    "total_entries_processed": 5503
+    "total_entries_processed": 5509
   },
   "simple_timeline": [
     "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752375607735&sid=2d1e2d68-5883-4437-9dc4-18e6787f79d5&ec=1 HTTP/1.1 host: statsig.anthropic.com",
@@ -1045,6 +1045,12 @@
     "POST /api/4508259541909504/envelope/?sentry_key=e531a1d9ec1de9064fae9d4affb0b0f4&sentry_version=7&sentry_client=sentry.javascript.node%2F7.120.3 HTTP/1.1 host: o1158394.ingest.us.sentry.io",
     "HTTP/1.1 429 Too Many Requests content-type: application/json",
     "HTTP/1.1 202 Accepted content-type: application/json",
-    "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752393212657&sid=0dd3e1a1-355d-4bf0-b4fc-e629b562bfd8&ec=1 HTTP/1.1 host: statsig.anthropic.com"
+    "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752393212657&sid=0dd3e1a1-355d-4bf0-b4fc-e629b562bfd8&ec=1 HTTP/1.1 host: statsig.anthropic.com",
+    "POST /api/4508259541909504/envelope/?sentry_key=e531a1d9ec1de9064fae9d4affb0b0f4&sentry_version=7&sentry_client=sentry.javascript.node%2F7.120.3 HTTP/1.1 host: o1158394.ingest.us.sentry.io",
+    "HTTP/1.1 429 Too Many Requests content-type: application/json",
+    "HTTP/1.1 202 Accepted content-type: application/json",
+    "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752394227369&sid=0dd3e1a1-355d-4bf0-b4fc-e629b562bfd8&ec=1 HTTP/1.1 host: statsig.anthropic.com",
+    "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752394227369&sid=0dd3e1a1-355d-4bf0-b4fc-e629b562bfd8&ec=1 HTTP/1.1 host: statsig.anthropic.com",
+    "POST /v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752394227369&sid=0dd3e1a1-355d-4bf0-b4fc-e629b562bfd8&ec=1 HTTP/1.1 host: statsig.anthropic.com"
   ]
 }
