@@ -3,19 +3,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yunwei37/agent-tracer)
 
-AgentSight is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. *No code changes required, zero new dependencies, no new SDKs; Works for most frameworks and applications out of box.*
+`AgentSight` is a observability framework designed specifically for monitoring LLM applications and AI agents behavior through SSL/TLS traffic interception and system level behavior tracing. Unlike traditional application-level instrumentation tools, AgentSight observes **black box AI applications** at the system boundary using eBPF technology, providing tamper-resistant insights into AI agent interactions with minimal performance overhead. `*No code changes required, zero new dependencies, no new SDKs; Works for most frameworks and applications out of box.*`
 
 ## 🚀 Key Advantages Over Existing Solutions
 
 ### **vs. LangSmith/Helicone/Langfuse (Application-Level Tools)**
 
-| **Challenge** | **Their Approach** | **AgentSight's Solution** |
-|---------------|-------------------|----------------------------|
-| **Agent spawns curl directly** | ❌ Missing span - no visibility | ✅ Captures execve("curl") + network writes |
-| **Agent mutates prompts before logging** | ❌ Shows modified/fake data | ✅ Sees raw ciphertext leaving TLS socket |
-| **Prompt injection silences logs** | ❌ Compromised agent drops logs | ✅ Independent kernel-level audit trail |
-| **New framework/tool adoption** | ❌ Need new SDK integration | ✅ Works immediately without changes |
-| **Cross-process agent coordination** | ❌ Limited visibility | ✅ Full system-wide process tracking |
+| **Challenge**                               | **Their approach**                               | **AgentSight's solution**                                           |
+| ------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| **Getting started on a new stack, adopting a new framework**          | ❌ Add a new SDK / proxy for *each* framework, New plug‑in every time APIs change      | ✅ Drop‑in daemon and tooling; no code or env‑var changes                        |
+| **Using commercial close source tools (claude‑code, …)**          | ❌ Hard to analysis, limited visibility into it's operations      | ✅ Have visibility into it's prompts, plan, behaviors, and more                        |
+| **Agents that write code to create and run tools**         | ❌ Only trace the execution of the agent tools      | ✅ Tracks every process behaviors at minimal performance overhead, like shell cmd, file‑I/O, network call, etc.       |
+| **Self‑modifying / prompt‑injected agents** | ❌ Logs can be silenced or faked in‑process       | ✅ Kernel‑level hooks record raw TLS & syscalls—tamper‑resistant     |
+| **Encrypted LLM traffic**                   | ❌ Only what the wrapper emits; ciphertext unseen | ✅ Uprobes capture the *real* unencrypted request / response |
+| **Cross‑agent coordination**                | ❌ Each process and framework traced in isolation               | ✅ Global analysis, and more            |
 
 ### **The System Boundary Advantage**
 
