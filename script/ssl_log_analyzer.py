@@ -494,7 +494,7 @@ Examples:
   python ssl_log_analyzer.py input.log --exclude-url "request.path_prefix=/v1/rgstr & code=202" --filter-debug
         """
     )
-    
+
     parser.add_argument('log_file', help='SSL log file to analyze')
     parser.add_argument('-o', '--output', help='Output file path (without extension for --format both)')
     parser.add_argument('--format', choices=['json', 'timeline', 'both'], default='json',
