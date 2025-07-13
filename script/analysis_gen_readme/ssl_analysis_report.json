@@ -1,0 +1,573 @@
+{
+  "analysis_metadata": {
+    "timestamp": "2025-07-13T09:55:12.135842",
+    "source_file": "/home/yunwei37/agent-tracer/script/analysis/ssl_timeline.json",
+    "analyzer_version": "1.0.0",
+    "focus": "HTTP headers and response metrics"
+  },
+  "summary": {
+    "total_requests": 303,
+    "total_responses": 303,
+    "unique_request_headers": 25,
+    "unique_response_headers": 37,
+    "sse_responses": 38,
+    "avg_response_time_ms": 0,
+    "total_data_transferred": 8236
+  },
+  "detailed_analysis": {
+    "request_headers": {
+      "total_requests": 303,
+      "unique_headers": 25,
+      "most_common_headers": {
+        "host": 303,
+        "connection": 303,
+        "accept": 301,
+        "user-agent": 301,
+        "accept-encoding": 301,
+        "content-type": 192,
+        "accept-language": 192,
+        "sec-fetch-mode": 192,
+        "content-length": 192,
+        "cache-control": 109,
+        "anthropic-beta": 38,
+        "anthropic-dangerous-direct-browser-access": 38,
+        "anthropic-version": 38,
+        "authorization": 38,
+        "x-app": 38,
+        "x-stainless-arch": 38,
+        "x-stainless-lang": 38,
+        "x-stainless-os": 38,
+        "x-stainless-package-version": 38,
+        "x-stainless-retry-count": 38
+      },
+      "methods": {
+        "POST": 194,
+        "HEAD": 109
+      },
+      "url_paths": {
+        "/": 109,
+        "/v1/messages?beta=true": 37,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400339001&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 3,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400349544&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 3,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400311036&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400316880&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/api/4508259541909504/envelope/?sentry_key=e531a1d9ec1de9064fae9d4affb0b0f4&sentry_version=7&sentry_client=sentry.javascript.node%2F7.120.3": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400329503&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400334143&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400344873&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400349549&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400349871&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400356300&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400403809&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400408411&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400408966&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 2,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400276293&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 1,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400276982&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 1,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400277130&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 1,
+        "/v1/rgstr?k=client-RRNS7R65EAtReO5XA4xDC3eU6ZdJQi6lLEP6b5j32Me&st=javascript-client&sv=3.12.1&t=1752400278068&sid=a59db288-2990-4b3f-96c0-72b3d27d4745&ec=1": 1
+      },
+      "hosts": {
+        "statsig.anthropic.com": 154,
+        "www.google.com": 109,
+        "api.anthropic.com": 38,
+        "o1158394.ingest.us.sentry.io": 2
+      },
+      "user_agents": {
+        "node": 154,
+        "axios/1.8.4": 109,
+        "claude-cli/1.0.44 (external, cli)": 38
+      },
+      "content_types": {
+        "text/plain;charset=UTF-8": 154,
+        "application/json": 38
+      },
+      "authorization_types": {
+        "Bearer": 38
+      },
+      "header_value_distribution": {
+        "host": {
+          "statsig.anthropic.com": 154,
+          "www.google.com": 109,
+          "api.anthropic.com": 38,
+          "o1158394.ingest.us.sentry.io": 2
+        },
+        "connection": {
+          "keep-alive": 303
+        },
+        "accept": {
+          "*/*": 154,
+          "application/json, text/plain, */*": 109,
+          "application/json": 38
+        },
+        "anthropic-beta": {
+          "oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14": 26,
+          "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14": 11,
+          "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,token-counting-2024-11-01": 1
+        },
+        "anthropic-dangerous-direct-browser-access": {
+          "true": 38
+        },
+        "anthropic-version": {
+          "2023-06-01": 38
+        },
+        "authorization": {
+          "Bearer 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": 38
+        },
+        "content-type": {
+          "text/plain;charset=UTF-8": 154,
+          "application/json": 38
+        },
+        "user-agent": {
+          "node": 154,
+          "axios/1.8.4": 109,
+          "claude-cli/1.0.44 (external, cli)": 38
+        },
+        "x-app": {
+          "cli": 38
+        },
+        "x-stainless-arch": {
+          "x64": 38
+        },
+        "x-stainless-helper-method": {
+          "stream": 37
+        },
+        "x-stainless-lang": {
+          "js": 38
+        },
+        "x-stainless-os": {
+          "Linux": 38
+        },
+        "x-stainless-package-version": {
+          "0.55.1": 38
+        },
+        "x-stainless-retry-count": {
+          "0": 38
+        },
+        "x-stainless-runtime": {
+          "node": 38
+        },
+        "x-stainless-runtime-version": {
+          "v20.16.0": 38
+        },
+        "x-stainless-timeout": {
+          "60": 37
+        },
+        "accept-language": {
+          "*": 192
+        },
+        "sec-fetch-mode": {
+          "cors": 192
+        },
+        "accept-encoding": {
+          "br, gzip, deflate": 192,
+          "gzip, compress, deflate, br": 109
+        },
+        "content-length": {
+          "1264": 21,
+          "1361": 12,
+          "1356": 12,
+          "1596": 9,
+          "1305": 8,
+          "1570": 7,
+          "1238": 7,
+          "1318": 7,
+          "1329": 6,
+          "1310": 6
+        },
+        "cache-control": {
+          "no-cache": 109
+        },
+        "transfer-encoding": {
+          "chunked": 2
+        }
+      }
+    },
+    "response_headers": {
+      "total_responses": 303,
+      "unique_headers": 37,
+      "most_common_headers": {
+        "content-type": 303,
+        "date": 303,
+        "alt-svc": 264,
+        "x-frame-options": 262,
+        "set-cookie": 262,
+        "via": 195,
+        "content-length": 157,
+        "access-control-allow-origin": 156,
+        "x-content-type-options": 154,
+        "permissions-policy": 154,
+        "x-response-time": 154,
+        "access-control-allow-credentials": 154,
+        "referrer-policy": 154,
+        "server": 149,
+        "transfer-encoding": 146,
+        "cache-control": 146,
+        "content-security-policy-report-only": 108,
+        "accept-ch": 108,
+        "p3p": 108,
+        "x-xss-protection": 108
+      },
+      "status_codes": {
+        "202": 154,
+        "200": 147,
+        "429": 2
+      },
+      "content_types": {
+        "application/json": 157,
+        "text/html; charset=ISO-8859-1": 108,
+        "text/event-stream; charset=utf-8": 38
+      },
+      "server_types": {
+        "gws": 108,
+        "cloudflare": 39,
+        "nginx": 2
+      },
+      "encoding_types": {},
+      "cache_headers": {
+        "cache-control: private": 108,
+        "cache-control: no-cache": 38,
+        "expires: Sun, 13 Jul 2025 09:51:51 GMT": 2,
+        "expires: Sun, 13 Jul 2025 09:53:29 GMT": 2,
+        "expires: Sun, 13 Jul 2025 09:51:52 GMT": 1,
+        "expires: Sun, 13 Jul 2025 09:51:53 GMT": 1,
+        "expires: Sun, 13 Jul 2025 09:51:54 GMT": 1,
+        "expires: Sun, 13 Jul 2025 09:51:55 GMT": 1,
+        "expires: Sun, 13 Jul 2025 09:51:56 GMT": 1,
+        "expires: Sun, 13 Jul 2025 09:51:57 GMT": 1
+      },
+      "security_headers": {
+        "x-content-type-options": 154,
+        "x-frame-options": 262,
+        "referrer-policy": 154,
+        "strict-transport-security": 41,
+        "x-xss-protection": 108
+      },
+      "content_length_stats": {
+        "count": 157,
+        "min": 16,
+        "max": 198,
+        "mean": 18.356687898089174,
+        "total": 2882
+      },
+      "header_value_distribution": {
+        "content-type": {
+          "application/json": 157,
+          "text/html; charset=ISO-8859-1": 108,
+          "text/event-stream; charset=utf-8": 38
+        },
+        "x-content-type-options": {
+          "nosniff": 154
+        },
+        "x-frame-options": {
+          "SAMEORIGIN": 262
+        },
+        "permissions-policy": {
+          "interest-cohort=()": 154
+        },
+        "x-response-time": {
+          "0 ms": 150,
+          "2 ms": 2,
+          "1 ms": 2
+        },
+        "access-control-allow-credentials": {
+          "true": 154
+        },
+        "access-control-allow-origin": {
+          "*": 156
+        },
+        "content-length": {
+          "16": 154,
+          "198": 2,
+          "22": 1
+        },
+        "date": {
+          "Sun, 13 Jul 2025 09:52:29 GMT": 10,
+          "Sun, 13 Jul 2025 09:51:56 GMT": 9,
+          "Sun, 13 Jul 2025 09:52:24 GMT": 9,
+          "Sun, 13 Jul 2025 09:52:18 GMT": 8,
+          "Sun, 13 Jul 2025 09:53:35 GMT": 8,
+          "Sun, 13 Jul 2025 09:52:13 GMT": 7,
+          "Sun, 13 Jul 2025 09:51:50 GMT": 6,
+          "Sun, 13 Jul 2025 09:52:00 GMT": 6,
+          "Sun, 13 Jul 2025 09:52:03 GMT": 6,
+          "Sun, 13 Jul 2025 09:53:28 GMT": 6
+        },
+        "referrer-policy": {
+          "strict-origin-when-cross-origin": 154
+        },
+        "set-cookie": {
+          "GCLB=\"efcb3f524fa2dcca\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"6bbfb4a4618ab8e9\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"2104914b67becba5\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"3b64387f45300dc7\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"901c5f0d67b7a87a\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"3a998a63dafb3a2d\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"0315fb92d8422441\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"553a5e5ba132b7c3\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"c482ce820de7c31f\"; Max-Age=1; Path=/; HttpOnly": 1,
+          "GCLB=\"84ccabf95ac5f760\"; Max-Age=1; Path=/; HttpOnly": 1
+        },
+        "alt-svc": {
+          "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000": 264
+        },
+        "via": {
+          "1.1 google, 1.1 google": 154,
+          "1.1 google": 41
+        },
+        "transfer-encoding": {
+          "chunked": 146
+        },
+        "connection": {
+          "keep-alive": 39
+        },
+        "cache-control": {
+          "private": 108,
+          "no-cache": 38
+        },
+        "anthropic-ratelimit-unified-status": {
+          "allowed": 38
+        },
+        "anthropic-ratelimit-unified-representative-claim": {
+          "five_hour": 38
+        },
+        "anthropic-ratelimit-unified-fallback-percentage": {
+          "0.5": 38
+        },
+        "anthropic-ratelimit-unified-reset": {
+          "1752415200": 38
+        },
+        "request-id": {
+          "req_011CR4p1mmKh1u2tFdmULy5P": 1,
+          "req_011CR4p1pmec4Vs6se44e6Uj": 1,
+          "req_011CR4p1wViQtGvRzaetr9F3": 1,
+          "req_011CR4p281Uv7m5Ys9dBai27": 1,
+          "req_011CR4p2AkBZHPSnnBAoZkdY": 1,
+          "req_011CR4p2DMT64LMn88kdXCuH": 1,
+          "req_011CR4p2GetQHb9ALdp14mgv": 1,
+          "req_011CR4p2PdLbxUw83N2B1jRy": 1,
+          "req_011CR4p2ZUApyrhP1vdfTLTr": 1,
+          "req_011CR4p2ew5mzY8j39FRVsap": 1
+        },
+        "strict-transport-security": {
+          "max-age=31536000; includeSubDomains; preload": 41
+        },
+        "anthropic-organization-id": {
+          "e45e60f2-6fd8-4c6d-a067-5d24acb50af6": 39
+        },
+        "cf-cache-status": {
+          "DYNAMIC": 39
+        },
+        "x-robots-tag": {
+          "none": 39
+        },
+        "server": {
+          "gws": 108,
+          "cloudflare": 39,
+          "nginx": 2
+        },
+        "cf-ray": {
+          "95e7e17f4fd12601-NRT": 1,
+          "95e7e183783e2638-NRT": 1,
+          "95e7e18d6a972601-NRT": 1,
+          "95e7e19ce8142601-NRT": 1,
+          "95e7e1a0d96e2638-NRT": 1,
+          "95e7e1a4ab0a2601-NRT": 1,
+          "95e7e1a7eab92638-NRT": 1,
+          "95e7e1b3bfc32601-NRT": 1,
+          "95e7e1c1fa572601-NRT": 1,
+          "95e7e1c9fdde2601-NRT": 1
+        },
+        "content-security-policy-report-only": {
+          "object-src 'none';base-uri 'self';script-src 'nonce-tsd9OaY4CNxXHTzwcxfgtQ' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-gbEvOLN-TvjnTxRS9uXcvA' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-CQ54R_aPiSMiQc8qBJqqBw' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-mq00CGQICY1C0UhGTLsA3g' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-qte9EEy_ML9DCpDSbrocIA' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-zQD1tkXCHSLic8snf5BApQ' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-J-xVIHVmUzVG2dUjYP8d2g' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-7bsahgQMQLUi7nMLjCnOFw' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-mVJ1IhJArHWJPGaEqRIntw' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1,
+          "object-src 'none';base-uri 'self';script-src 'nonce-yhJbOJVb6ts0MKW8G1cHTQ' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp": 1
+        },
+        "accept-ch": {
+          "Sec-CH-Prefers-Color-Scheme": 108
+        },
+        "p3p": {
+          "CP=\"This is not a P3P policy! See g.co/p3phelp for more info.\"": 108
+        },
+        "x-xss-protection": {
+          "0": 108
+        },
+        "expires": {
+          "Sun, 13 Jul 2025 09:51:51 GMT": 2,
+          "Sun, 13 Jul 2025 09:53:29 GMT": 2,
+          "Sun, 13 Jul 2025 09:51:52 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:53 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:54 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:55 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:56 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:57 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:58 GMT": 1,
+          "Sun, 13 Jul 2025 09:51:59 GMT": 1
+        },
+        "retry-after": {
+          "8": 1,
+          "217": 1
+        },
+        "x-sentry-rate-limits": {
+          "8:default;error;security:project:project_abuse_limit": 1,
+          "217:default;error;security:key:key_quota": 1
+        },
+        "vary": {
+          "accept-encoding": 2
+        },
+        "access-control-expose-headers": {
+          "x-sentry-error,x-sentry-rate-limits,retry-after": 2
+        },
+        "cross-origin-resource-policy": {
+          "cross-origin": 2
+        }
+      }
+    },
+    "response_metrics": {
+      "total_request_response_pairs": 1,
+      "successful_correlations": 1,
+      "status_code_distribution": {
+        "200": 1
+      }
+    },
+    "communication_patterns": {
+      "request_methods": {
+        "POST": 194,
+        "HEAD": 109
+      },
+      "protocols": {
+        "HTTP/1.1": 303
+      },
+      "top_paths": {
+        "/v1/rgstr": 154,
+        "/": 109,
+        "/v1/messages": 37,
+        "/api/{{id}}/envelope/": 2,
+        "/v1/messages/count_tokens": 1
+      },
+      "response_content_types": {
+        "application/json": 157,
+        "text/html; charset=ISO-8859-1": 108,
+        "text/event-stream; charset=utf-8": 38
+      },
+      "sse_responses": 38,
+      "communication_summary": {
+        "unique_methods": 2,
+        "unique_protocols": 1,
+        "unique_paths": 5,
+        "unique_content_types": 3
+      }
+    },
+    "content_analysis": {
+      "request_content": {
+        "requests_with_body": 194,
+        "json_requests": 192,
+        "form_requests": 0,
+        "total_request_size": 1562757
+      },
+      "response_content": {
+        "responses_with_body": 192,
+        "json_responses": 157,
+        "html_responses": 0,
+        "sse_responses": 35,
+        "total_response_size": 8236
+      }
+    },
+    "endpoint_patterns": {
+      "total_unique_endpoints": 1,
+      "most_active_endpoints": [
+        [
+          "/v1/rgstr",
+          {
+            "request_count": 1,
+            "methods": {
+              "POST": 1
+            },
+            "status_codes": {
+              "200": 1
+            },
+            "avg_response_time_ms": 0,
+            "max_response_time_ms": 0,
+            "min_response_time_ms": 0,
+            "unique_request_headers": 9,
+            "unique_response_headers": 13,
+            "most_common_request_headers": {
+              "host": 1,
+              "connection": 1,
+              "content-type": 1,
+              "accept": 1,
+              "accept-language": 1,
+              "sec-fetch-mode": 1,
+              "user-agent": 1,
+              "accept-encoding": 1,
+              "content-length": 1
+            },
+            "most_common_response_headers": {
+              "content-type": 1,
+              "content-security-policy-report-only": 1,
+              "accept-ch": 1,
+              "p3p": 1,
+              "date": 1,
+              "server": 1,
+              "x-xss-protection": 1,
+              "x-frame-options": 1,
+              "transfer-encoding": 1,
+              "expires": 1
+            },
+            "hosts": {
+              "statsig.anthropic.com": 1
+            }
+          }
+        ]
+      ],
+      "endpoint_details": {
+        "/v1/rgstr": {
+          "request_count": 1,
+          "methods": {
+            "POST": 1
+          },
+          "status_codes": {
+            "200": 1
+          },
+          "avg_response_time_ms": 0,
+          "max_response_time_ms": 0,
+          "min_response_time_ms": 0,
+          "unique_request_headers": 9,
+          "unique_response_headers": 13,
+          "most_common_request_headers": {
+            "host": 1,
+            "connection": 1,
+            "content-type": 1,
+            "accept": 1,
+            "accept-language": 1,
+            "sec-fetch-mode": 1,
+            "user-agent": 1,
+            "accept-encoding": 1,
+            "content-length": 1
+          },
+          "most_common_response_headers": {
+            "content-type": 1,
+            "content-security-policy-report-only": 1,
+            "accept-ch": 1,
+            "p3p": 1,
+            "date": 1,
+            "server": 1,
+            "x-xss-protection": 1,
+            "x-frame-options": 1,
+            "transfer-encoding": 1,
+            "expires": 1
+          },
+          "hosts": {
+            "statsig.anthropic.com": 1
+          }
+        }
+      }
+    }
+  }
+}
