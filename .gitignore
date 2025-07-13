@@ -5,3 +5,4 @@ res.txt
 save.log
 test_events.log
 ssl_analyzed.json
+__pycache__/

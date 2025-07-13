@@ -39,6 +39,9 @@ echo "Step 3: Generating clean data timeline..."
 python3 "$SCRIPT_DIR/ssl_data_timeline.py" "$ANALYSIS_DIR/ssl_timeline.json" -o "$ANALYSIS_DIR/ssl_data_only.json"
 echo "✓ Data timeline generation complete"
 
+echo "Step 4: Running SSL log analyzer without rgstr..."
+python3 "$SCRIPT_DIR/ssl_log_analyzer.py" "$LOG_FILE" --exclude-url "request.path_prefix=/v1/rgstr" --exclude-url "response.status_code=202" -o "$ANALYSIS_DIR/ssl_timeline_no_rgstr.json" --format both
+
 echo ""
 echo "=== Analysis Complete ==="
 echo "Output files:"
@@ -46,3 +49,4 @@ echo "  - Full timeline: $ANALYSIS_DIR/ssl_timeline.json"
 echo "  - Simple timeline: $ANALYSIS_DIR/ssl_timeline_simple_timeline.json"
 echo "  - Header & metrics report: $ANALYSIS_DIR/ssl_analysis_report.json"
 echo "  - Clean data timeline (no headers): $ANALYSIS_DIR/ssl_data_only.json" 
+echo "  - Clean data timeline (no rgstr): $ANALYSIS_DIR/ssl_timeline_no_rgstr.json"

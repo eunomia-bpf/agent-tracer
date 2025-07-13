@@ -1,6 +1,6 @@
 {
   "analysis_metadata": {
-    "timestamp": "2025-07-13T08:17:31.298859",
+    "timestamp": "2025-07-13T09:06:11.809875",
     "source_file": "/home/yunwei37/agent-tracer/script/analysis/ssl_timeline.json",
     "analyzer_version": "1.0.0",
     "focus": "HTTP headers and response metrics"

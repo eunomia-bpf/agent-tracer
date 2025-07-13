@@ -17,18 +17,50 @@ import os
 from collections import defaultdict, OrderedDict
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
+from filter_expression import FilterExpression
 
 class SSLLogAnalyzer:
-    def __init__(self, log_file: str, quiet: bool = False):
+    def __init__(self, log_file: str, quiet: bool = False, exclude_url_patterns: List[str] = None, filter_debug: bool = False):
         self.log_file = log_file
         self.quiet = quiet
+        self.filter_debug = filter_debug
+        self.exclude_url_patterns = exclude_url_patterns or []
+        self.filter_expressions = [FilterExpression(pattern, debug=filter_debug) for pattern in self.exclude_url_patterns]
         self.all_entries = []  # All parsed entries with timestamps
         self.timeline = []  # Simple chronological timeline
+        self.excluded_count = 0  # Track how many entries were excluded
+        self.excluded_examples = []  # Store examples of excluded entries for debugging
         
     def debug_print(self, message: str):
         """Print debug message only if not in quiet mode"""
         if not self.quiet:
             print(message)
+            
+    def should_exclude_entry(self, parsed_data: Dict[str, Any]) -> bool:
+        """Check if entry should be excluded based on URL patterns"""
+        if not self.filter_expressions:
+            return False
+            
+        # Evaluate each filter expression
+        for i, expr in enumerate(self.filter_expressions):
+            if expr.evaluate(parsed_data):
+                pattern = self.exclude_url_patterns[i]
+                path = parsed_data.get('path', '')
+                method = parsed_data.get('method', '')
+                self.debug_print(f"[DEBUG] Excluding request: {method} {path} matching expression '{pattern}'")
+                
+                # Store example for debugging
+                if len(self.excluded_examples) < 5:  # Keep only first 5 examples
+                    self.excluded_examples.append({
+                        'method': method,
+                        'path': path,
+                        'pattern': pattern,
+                        'headers': parsed_data.get('headers', {})
+                    })
+                    
+                return True
+                
+        return False
         
     def parse_http_data(self, data: str) -> Dict[str, Any]:
         """Parse HTTP request/response data"""
@@ -154,6 +186,11 @@ class SSLLogAnalyzer:
         parsed_data['pid'] = ssl_data.get('pid')
         parsed_data['tid'] = ssl_data.get('tid')
         parsed_data['comm'] = ssl_data.get('comm')
+        
+        # Check if this entry should be excluded
+        if self.should_exclude_entry(parsed_data):
+            self.excluded_count += 1
+            return
         
         # Add to all entries for timeline processing
         self.all_entries.append(parsed_data)
@@ -426,7 +463,10 @@ class SSLLogAnalyzer:
                 'total_requests': requests,
                 'total_responses': responses,
                 'sse_responses': sse_responses,
-                'total_entries_processed': len(self.all_entries)
+                'total_entries_processed': len(self.all_entries),
+                'excluded_entries': self.excluded_count,
+                'exclude_url_patterns': self.exclude_url_patterns,
+                'excluded_examples': self.excluded_examples
             },
             'timeline': self.timeline
         }
@@ -443,11 +483,65 @@ Output formats:
   timeline      - Timeline-only JSON file
   both          - Both full results and timeline-only files
 
+Filter Expression Syntax (NEW):
+  Use dot notation to specify target type: request.field or response.field
+  
+  REQUEST FILTERS:
+    request.path_prefix=/v1/rgstr       - Path starts with value
+    request.path=/exact/path            - Exact path match
+    request.path_contains=substring     - Path contains substring
+    request.method=GET                  - HTTP method
+    request.host=api.example.com        - Host header
+    request.body_contains=text          - Request body contains text
+    request.header=user-agent           - Request header contains value
+    code=202                            - Query parameter (legacy)
+    
+  RESPONSE FILTERS:
+    response.status_code=200            - HTTP status code
+    response.status_text=OK             - Status text contains value
+    response.content_type=application/json - Content-Type header
+    response.server=nginx               - Server header
+    response.body_contains=text         - Response body contains text
+    response.body_size=1000             - Response body size >= value
+    response.header=cache-control       - Response header contains value
+  
+  LOGICAL OPERATORS:
+    & (AND) - All conditions must be true
+    | (OR)  - Any condition can be true
+    Note: AND has higher precedence than OR
+  
+  EXAMPLES:
+    # Filter requests only
+    --exclude-url "request.path_prefix=/v1/rgstr"
+    --exclude-url "request.method=GET & request.host=api.example.com"
+    
+    # Filter responses only
+    --exclude-url "response.status_code=404"
+    --exclude-url "response.content_type=text/event-stream"
+    
+    # Mix request and response filters
+    --exclude-url "request.path_prefix=/v1/rgstr & response.status_code=200"
+    --exclude-url "request.method=POST | response.status_code=500"
+    
+    # Complex expressions
+    --exclude-url "request.path_prefix=/v1/rgstr & code=202 | response.status_code=404"
+    --exclude-url "request.method=GET & request.host=api.example.com | response.server=nginx"
+  
+  BACKWARD COMPATIBILITY:
+    Legacy syntax still works (assumes request filtering):
+    --exclude-url "path_prefix=/v1/rgstr"
+    --exclude-url "/health"
+    --exclude-url "method=GET"
+
 Examples:
   python ssl_log_analyzer.py input.log
   python ssl_log_analyzer.py input.log -o results.json
   python ssl_log_analyzer.py input.log --format timeline -q
   python ssl_log_analyzer.py input.log --format both -o analysis
+  python ssl_log_analyzer.py input.log --exclude-url "request.path_prefix=/v1/rgstr"
+  python ssl_log_analyzer.py input.log --exclude-url "response.status_code=404"
+  python ssl_log_analyzer.py input.log --exclude-url "request.method=GET | response.content_type=text/event-stream"
+  python ssl_log_analyzer.py input.log --exclude-url "request.path_prefix=/v1/rgstr & code=202" --filter-debug
         """
     )
     
@@ -457,11 +551,15 @@ Examples:
                         help='Output format (default: json)')
     parser.add_argument('-q', '--quiet', action='store_true',
                         help='Suppress debug output')
+    parser.add_argument('--exclude-url', action='append', dest='exclude_url_patterns',
+                        help='Exclude requests matching this expression (can be used multiple times)')
+    parser.add_argument('--filter-debug', action='store_true',
+                        help='Enable detailed filter debugging output')
     
     args = parser.parse_args()
     
     try:
-        analyzer = SSLLogAnalyzer(args.log_file, quiet=args.quiet)
+        analyzer = SSLLogAnalyzer(args.log_file, quiet=args.quiet, exclude_url_patterns=args.exclude_url_patterns, filter_debug=args.filter_debug)
         results = analyzer.analyze()
         
         # Determine output file names
@@ -501,6 +599,14 @@ Examples:
             print(f"Total responses: {results['analysis_metadata']['total_responses']}")
             print(f"SSE responses: {results['analysis_metadata']['sse_responses']}")
             print(f"Total entries processed: {results['analysis_metadata']['total_entries_processed']}")
+            print(f"Excluded entries: {results['analysis_metadata']['excluded_entries']}")
+            print(f"Exclude patterns: {results['analysis_metadata']['exclude_url_patterns']}")
+            
+            # Show excluded examples if any
+            if results['analysis_metadata']['excluded_examples']:
+                print(f"Excluded examples:")
+                for i, example in enumerate(results['analysis_metadata']['excluded_examples'], 1):
+                    print(f"  {i}. {example['method']} {example['path']} (pattern: {example['pattern']})")
         
         return output_files
         
