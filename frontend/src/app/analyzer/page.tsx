@@ -14,6 +14,7 @@ export default function AnalyzerPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('log');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [isParsed, setIsParsed] = useState(false);
 
   // Load data from localStorage on component mount
   useEffect(() => {
@@ -23,6 +24,7 @@ export default function AnalyzerPage() {
     if (savedContent && savedEvents) {
       setLogContent(savedContent);
       setEvents(JSON.parse(savedEvents));
+      setIsParsed(true);
     }
   }, []);
 
@@ -31,12 +33,12 @@ export default function AnalyzerPage() {
     if (uploadedFile) {
       setFile(uploadedFile);
       setError('');
+      setIsParsed(false);
       
       const reader = new FileReader();
       reader.onload = (e) => {
         const content = e.target?.result as string;
         setLogContent(content);
-        parseLogContent(content);
       };
       reader.readAsText(uploadedFile);
     }
@@ -44,7 +46,8 @@ export default function AnalyzerPage() {
 
   const handleTextPaste = (content: string) => {
     setLogContent(content);
-    parseLogContent(content);
+    setIsParsed(false);
+    setError('');
   };
 
   const parseLogContent = (content: string) => {
@@ -101,6 +104,7 @@ export default function AnalyzerPage() {
       const sortedEvents = parsedEvents.sort((a, b) => a.timestamp - b.timestamp);
       
       setEvents(sortedEvents);
+      setIsParsed(true);
       
       // Save to localStorage
       localStorage.setItem('agent-tracer-log', content);
@@ -118,6 +122,7 @@ export default function AnalyzerPage() {
     setLogContent('');
     setEvents([]);
     setError('');
+    setIsParsed(false);
     localStorage.removeItem('agent-tracer-log');
     localStorage.removeItem('agent-tracer-events');
   };
@@ -138,7 +143,7 @@ export default function AnalyzerPage() {
         </div>
 
         {/* File Upload Section */}
-        {events.length === 0 && (
+        {!isParsed && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
               Upload Log File
@@ -173,6 +178,18 @@ export default function AnalyzerPage() {
               </div>
             </div>
 
+            {/* Parse Button */}
+            {logContent && !loading && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => parseLogContent(logContent)}
+                  className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  Parse Log
+                </button>
+              </div>
+            )}
+
             {error && (
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
                 <div className="text-red-700 text-sm">{error}</div>
@@ -189,7 +206,7 @@ export default function AnalyzerPage() {
         )}
 
         {/* Main Content */}
-        {events.length > 0 && (
+        {isParsed && events.length > 0 && (
           <div className="space-y-6">
             {/* Controls */}
             <div className="bg-white rounded-lg shadow-md p-4">
