@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser}
+    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -30,6 +30,9 @@ enum Commands {
         /// Enable HTTP parsing (automatically enables SSE merge first)
         #[arg(long)]
         http_parser: bool,
+        /// HTTP filter patterns to exclude events (can be used multiple times)
+        #[arg(long)]
+        http_filter: Vec<String>,
         /// Suppress console output
         #[arg(short, long)]
         quiet: bool,
@@ -65,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, http_parser, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *quiet, args).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, http_parser, http_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, http_filter, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
     }
@@ -164,7 +167,7 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
 }
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, http_filter_patterns: &Vec<String>, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -180,7 +183,14 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
     if enable_http_parser {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
         ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPParser::new()));
-        println!("Starting SSL event stream with SSE processing and HTTP parsing enabled (press Ctrl+C to stop):");
+        
+        // Add HTTP filter if patterns are provided
+        if !http_filter_patterns.is_empty() {
+            ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPFilter::with_patterns(http_filter_patterns.clone())));
+            println!("Starting SSL event stream with SSE processing, HTTP parsing, and HTTP filtering enabled (press Ctrl+C to stop):");
+        } else {
+            println!("Starting SSL event stream with SSE processing and HTTP parsing enabled (press Ctrl+C to stop):");
+        }
     } else if enable_chunk_merger {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
         println!("Starting SSL event stream with SSE processing enabled (press Ctrl+C to stop):");

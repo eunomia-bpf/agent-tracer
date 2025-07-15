@@ -19,6 +19,7 @@ pub mod output;
 pub mod file_logger;
 pub mod sse_processor;
 pub mod http_parser;
+pub mod http_filter;
 pub mod event;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ pub use output::OutputAnalyzer;
 pub use file_logger::FileLogger;
 pub use sse_processor::SSEProcessor;
 pub use http_parser::HTTPParser;
+pub use http_filter::HTTPFilter;
 
 #[cfg(test)]
 mod comprehensive_analyzer_chain_tests {
