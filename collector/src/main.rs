@@ -30,6 +30,9 @@ enum Commands {
         /// Enable HTTP parsing (automatically enables SSE merge first)
         #[arg(long)]
         http_parser: bool,
+        /// Include raw SSL data in HTTP parser events
+        #[arg(long)]
+        http_raw_data: bool,
         /// HTTP filter patterns to exclude events (can be used multiple times)
         #[arg(long)]
         http_filter: Vec<String>,
@@ -68,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, http_parser, http_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, http_filter, *quiet, args).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
     }
@@ -167,7 +170,7 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
 }
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, http_filter_patterns: &Vec<String>, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -182,14 +185,23 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
     // Add analyzers based on flags - when HTTP parser is enabled, always enable SSE merge first
     if enable_http_parser {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
-        ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPParser::new()));
+        
+        // Create HTTP parser with appropriate configuration
+        let http_parser = if include_raw_data {
+            HTTPParser::new()
+        } else {
+            HTTPParser::new().disable_raw_data()
+        };
+        ssl_runner = ssl_runner.add_analyzer(Box::new(http_parser));
         
         // Add HTTP filter if patterns are provided
         if !http_filter_patterns.is_empty() {
             ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPFilter::with_patterns(http_filter_patterns.clone())));
-            println!("Starting SSL event stream with SSE processing, HTTP parsing, and HTTP filtering enabled (press Ctrl+C to stop):");
+            let raw_data_info = if include_raw_data { " (with raw data)" } else { "" };
+            println!("Starting SSL event stream with SSE processing, HTTP parsing{}, and HTTP filtering enabled (press Ctrl+C to stop):", raw_data_info);
         } else {
-            println!("Starting SSL event stream with SSE processing and HTTP parsing enabled (press Ctrl+C to stop):");
+            let raw_data_info = if include_raw_data { " (with raw data)" } else { "" };
+            println!("Starting SSL event stream with SSE processing and HTTP parsing{} enabled (press Ctrl+C to stop):", raw_data_info);
         }
     } else if enable_chunk_merger {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));

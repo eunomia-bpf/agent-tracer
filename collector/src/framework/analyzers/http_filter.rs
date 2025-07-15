@@ -65,11 +65,6 @@ impl HTTPFilter {
         filter
     }
 
-    /// Enable debug mode
-    pub fn with_debug(mut self) -> Self {
-        self.debug = true;
-        self
-    }
 
     /// Check if an HTTP parser event should be filtered out
     fn should_filter_event(&self, event: &Event) -> bool {

@@ -111,6 +111,7 @@ pub struct HTTPEvent {
     pub comm: String,
     pub pid: u64,
     pub timestamp_ns: u64,
+    pub raw_data: Option<String>,
 }
 
 impl HTTPEvent {
@@ -153,11 +154,17 @@ impl HTTPEvent {
             comm,
             pid,
             timestamp_ns,
+            raw_data: None,
         }
     }
 
+    pub fn with_raw_data(mut self, raw_data: String) -> Self {
+        self.raw_data = Some(raw_data);
+        self
+    }
+
     pub fn to_event(&self) -> Event {
-        let data = serde_json::json!({
+        let mut data = serde_json::json!({
             "tid": self.tid,
             "message_type": self.message_type,
             "first_line": self.first_line,
@@ -178,10 +185,12 @@ impl HTTPEvent {
             "timestamp_ns": self.timestamp_ns,
         });
 
+        // Only include raw_data if it's present
+        if let Some(raw_data) = &self.raw_data {
+            data["raw_data"] = serde_json::json!(raw_data);
+        }
+
         Event::new("http_parser".to_string(), data)
     }
 
-    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
 }

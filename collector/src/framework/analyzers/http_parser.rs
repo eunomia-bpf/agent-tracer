@@ -10,8 +10,8 @@ use std::collections::HashMap;
 /// HTTP Parser Analyzer that parses SSL traffic into HTTP requests/responses
 pub struct HTTPParser {
     name: String,
-    /// Flag to show handshake events (default: false)
-    show_handshake: bool,
+    /// Flag to include raw data in parsed events (default: true)
+    include_raw_data: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -38,20 +38,19 @@ pub struct HTTPMessage {
 }
 
 impl HTTPParser {
-    /// Create a new HTTPParser with default settings (handshake hidden)
+    /// Create a new HTTPParser with default settings (raw data included)
     pub fn new() -> Self {
         HTTPParser {
             name: "HTTPParser".to_string(),
-            show_handshake: false,
+            include_raw_data: true,
         }
     }
 
-    /// Create a new HTTPParser with handshake events enabled
-    pub fn with_handshake() -> Self {
-        HTTPParser {
-            name: "HTTPParser".to_string(),
-            show_handshake: true,
-        }
+
+    /// Disable raw data inclusion
+    pub fn disable_raw_data(mut self) -> Self {
+        self.include_raw_data = false;
+        self
     }
 
     /// Check if SSL data contains HTTP protocol data
@@ -167,6 +166,7 @@ impl HTTPParser {
         tid: u64,
         parsed_message: HTTPMessage,
         original_event: &Event,
+        include_raw_data: bool,
     ) -> Event {
         let message_type_str = match parsed_message.message_type {
             HTTPMessageType::Request => "request",
@@ -187,7 +187,7 @@ impl HTTPParser {
             parsed_message.body.as_ref().map(|b| b.len()).unwrap_or(0) +
             4; // +4 for \r\n\r\n separator
 
-        let http_event = HTTPEvent::new(
+        let mut http_event = HTTPEvent::new(
             tid,
             message_type_str.to_string(),
             parsed_message.first_line,
@@ -208,25 +208,21 @@ impl HTTPParser {
             original_event.data.get("timestamp_ns").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
         );
 
+        // Include raw data if requested
+        if include_raw_data {
+            http_event = http_event.with_raw_data(parsed_message.raw_data);
+        }
+
         http_event.to_event()
     }
 
     /// Handle SSL events (HTTP request/response data)
     fn handle_ssl_event(
         event: Event,
-        show_handshake: bool,
+        include_raw_data: bool,
     ) -> Option<Event> {
         let ssl_data = &event.data;
         
-        // Check if this is a handshake event
-        if ssl_data.get("is_handshake").and_then(|v| v.as_bool()).unwrap_or(false) {
-            if show_handshake {
-                return Some(event); // Pass through handshake events if enabled
-            } else {
-                return None; // Hide handshake events by default
-            }
-        }
-
         let data_str = match ssl_data.get("data").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => return Some(event),
@@ -236,7 +232,7 @@ impl HTTPParser {
         if Self::is_http_data(data_str) {
             if let Some(parsed_message) = Self::parse_http_message(data_str) {
                 let tid = ssl_data.get("tid").and_then(|v| v.as_u64()).unwrap_or(0);
-                return Some(Self::create_http_event(tid, parsed_message, &event));
+                return Some(Self::create_http_event(tid, parsed_message, &event, include_raw_data));
             }
         }
 
@@ -248,13 +244,13 @@ impl HTTPParser {
 #[async_trait]
 impl Analyzer for HTTPParser {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
-        let show_handshake = self.show_handshake;
+        let include_raw_data = self.include_raw_data;
         
         let processed_stream = stream.filter_map(move |event| {
             async move {
                 // Only process SSL events
                 if event.source == "ssl" {
-                    Self::handle_ssl_event(event, show_handshake)
+                    Self::handle_ssl_event(event, include_raw_data)
                 } else {
                     Some(event) // Pass through other events
                 }
