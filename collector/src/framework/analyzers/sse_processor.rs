@@ -421,7 +421,7 @@ impl SSEProcessor {
         );
 
         // Convert to framework Event
-        sse_processor_event.to_event()
+        sse_processor_event.to_event(original_event)
     }
 }
 

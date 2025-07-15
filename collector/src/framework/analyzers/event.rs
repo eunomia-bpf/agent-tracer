@@ -64,7 +64,7 @@ impl SSEProcessorEvent {
         }
     }
 
-    pub fn to_event(&self) -> Event {
+    pub fn to_event(&self, original_event: &Event) -> Event {
         let data = serde_json::json!({
             "connection_id": self.connection_id,
             "message_id": self.message_id,
@@ -86,7 +86,20 @@ impl SSEProcessorEvent {
             "sse_events": self.sse_events
         });
 
-        Event::new("sse_processor".to_string(), data)
+        // Use merged end_time if events were merged, otherwise use original timestamp
+        let timestamp = if self.event_count > 1 {
+            self.end_time
+        } else {
+            original_event.timestamp
+        };
+
+        Event::new_with_timestamp(
+            timestamp,
+            "sse_processor".to_string(), 
+            original_event.pid, 
+            original_event.comm.clone(), 
+            data
+        )
     }
 }
 
@@ -163,7 +176,7 @@ impl HTTPEvent {
         self
     }
 
-    pub fn to_event(&self) -> Event {
+    pub fn to_event(&self, original_event: &Event) -> Event {
         let mut data = serde_json::json!({
             "tid": self.tid,
             "message_type": self.message_type,
@@ -190,7 +203,13 @@ impl HTTPEvent {
             data["raw_data"] = serde_json::json!(raw_data);
         }
 
-        Event::new("http_parser".to_string(), data)
+        Event::new_with_timestamp(
+            self.timestamp_ns / 1_000_000,  // Convert nanoseconds to milliseconds
+            "http_parser".to_string(), 
+            original_event.pid, 
+            original_event.comm.clone(), 
+            data
+        )
     }
 
 }

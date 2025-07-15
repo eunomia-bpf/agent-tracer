@@ -100,8 +100,8 @@ mod tests {
         let mut analyzer = OutputAnalyzer::new(); // Simple format to avoid timestamp issues in tests
         
         let events = vec![
-            Event::new("test-runner".to_string(), json!({"data": 1})),
-            Event::new("test-runner".to_string(), json!({"data": 2})),
+            Event::new("test-runner".to_string(), 1234, "test-runner".to_string(), json!({"data": 1})),
+            Event::new("test-runner".to_string(), 1234, "test-runner".to_string(), json!({"data": 2})),
         ];
         
         let input_stream: EventStream = Box::pin(stream::iter(events.clone()));
@@ -126,7 +126,7 @@ mod tests {
         
         // Create an event with binary data
         let binary_data = String::from_utf8_lossy(&[0x00, 0x01, 0x02, 0xFF, 0xFE]).to_string();
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "ssl".to_string(), json!({
             "data": binary_data,
             "len": 5
         }));

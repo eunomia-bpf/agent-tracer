@@ -141,7 +141,7 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let mut logger = FileLogger::new(temp_file.path()).unwrap();
         
-        let test_event = Event::new("test".to_string(), json!({
+        let test_event = Event::new("test".to_string(), 1234, "test".to_string(), json!({
             "message": "test event",
             "value": 42
         }));
@@ -168,7 +168,7 @@ mod tests {
         
         // Create an event with binary data
         let binary_data = String::from_utf8_lossy(&[0x00, 0x01, 0x02, 0xFF, 0xFE]).to_string();
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "ssl".to_string(), json!({
             "data": binary_data,
             "len": 5
         }));

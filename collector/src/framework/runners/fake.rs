@@ -71,10 +71,12 @@ impl FakeRunner {
             pair_id
         );
 
-        Event {
-            source: "ssl".to_string(),
-            timestamp: current_time,
-            data: json!({
+        Event::new_with_timestamp(
+            current_time,
+            "ssl".to_string(),
+            pid,
+            "python".to_string(),
+            json!({
                 "comm": "python",
                 "data": request_data,
                 "function": "WRITE/SEND",
@@ -88,7 +90,7 @@ impl FakeRunner {
                 "truncated": false,
                 "uid": 1000
             }),
-        }
+        )
     }
 
     /// Generate a realistic SSL response event  
@@ -112,10 +114,12 @@ impl FakeRunner {
             pair_id, pair_id
         );
 
-        Event {
-            source: "ssl".to_string(),
-            timestamp: current_time,
-            data: json!({
+        Event::new_with_timestamp(
+            current_time,
+            "ssl".to_string(),
+            pid,
+            "python".to_string(),
+            json!({
                 "comm": "python",
                 "data": response_data,
                 "function": "READ/RECV",
@@ -129,7 +133,7 @@ impl FakeRunner {
                 "truncated": false,
                 "uid": 1000
             }),
-        }
+        )
     }
 }
 
@@ -414,23 +418,23 @@ mod tests {
         // Generate mixed source events
         let event_stream = async_stream::stream! {
             // SSL events (should be processed by HTTP analyzer)
-            yield Event::new("ssl".to_string(), json!({
+            yield Event::new("ssl".to_string(), 1234, "test-comm".to_string(), json!({
                 "data": "GET /api/test HTTP/1.1\r\nHost: example.com\r\n\r\n",
                 "pid": 1234
             }));
             
-            yield Event::new("ssl".to_string(), json!({
+            yield Event::new("ssl".to_string(), 1234, "test-comm".to_string(), json!({
                 "data": "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"result\":\"ok\"}",
                 "pid": 1234
             }));
             
             // Non-SSL events (should be forwarded unchanged)
-            yield Event::new("process".to_string(), json!({
+            yield Event::new("process".to_string(), 5678, "test_process".to_string(), json!({
                 "pid": 5678,
                 "command": "test_process"
             }));
             
-            yield Event::new("custom".to_string(), json!({
+            yield Event::new("custom".to_string(), 999, "custom".to_string(), json!({
                 "message": "custom event",
                 "value": 42
             }));

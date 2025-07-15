@@ -50,7 +50,7 @@ mod sse_processor_tests {
         
         let test_data = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
         
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "test".to_string(), json!({
             "comm": "test",
             "data": test_data,
             "function": "READ/RECV",
@@ -78,7 +78,7 @@ mod sse_processor_tests {
     async fn test_sse_processor_ignores_non_ssl_events() {
         let mut processor = SSEProcessor::new();
         
-        let test_event = Event::new("process".to_string(), json!({
+        let test_event = Event::new("process".to_string(), 1234, "test".to_string(), json!({
             "comm": "test",
             "data": "some data",
             "pid": 1234
@@ -99,7 +99,7 @@ mod sse_processor_tests {
     async fn test_sse_processor_ignores_non_sse_ssl_events() {
         let mut processor = SSEProcessor::new();
         
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "test".to_string(), json!({
             "comm": "test", 
             "data": "regular HTTP data without SSE",
             "function": "READ/RECV",
@@ -163,7 +163,7 @@ mod sse_processor_tests {
             "{\"type\":\"message_stop\"}"
         );
         
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
             "comm": "claude",
             "data": sse_data,
             "function": "READ/RECV",
@@ -192,7 +192,7 @@ mod sse_processor_tests {
         
         // Create a sequence of SSE events that should be merged
         let events = vec![
-            Event::new("ssl".to_string(), json!({
+            Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
                 "comm": "claude",
                 "data": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\"}}\n\n",
                 "function": "READ/RECV",
@@ -200,7 +200,7 @@ mod sse_processor_tests {
                 "tid": 1234,
                 "timestamp_ns": 1000000000
             })),
-            Event::new("ssl".to_string(), json!({
+            Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
                 "comm": "claude", 
                 "data": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello \"}}\n\n",
                 "function": "READ/RECV",
@@ -208,7 +208,7 @@ mod sse_processor_tests {
                 "tid": 1234,
                 "timestamp_ns": 1000000100
             })),
-            Event::new("ssl".to_string(), json!({
+            Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
                 "comm": "claude",
                 "data": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"World!\"}}\n\n",
                 "function": "READ/RECV", 
@@ -216,7 +216,7 @@ mod sse_processor_tests {
                 "tid": 1234,
                 "timestamp_ns": 1000000200
             })),
-            Event::new("ssl".to_string(), json!({
+            Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
                 "comm": "claude",
                 "data": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
                 "function": "READ/RECV",
@@ -245,7 +245,7 @@ mod sse_processor_tests {
         // Test processing partial JSON like in ssl_log_analyzer.py
         let mut processor = SSEProcessor::new();
         
-        let test_event = Event::new("ssl".to_string(), json!({
+        let test_event = Event::new("ssl".to_string(), 1234, "claude".to_string(), json!({
             "comm": "claude",
             "data": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"message\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Hello World!\\\"}\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
             "function": "READ/RECV",

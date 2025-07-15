@@ -213,7 +213,7 @@ impl HTTPParser {
             http_event = http_event.with_raw_data(parsed_message.raw_data);
         }
 
-        http_event.to_event()
+        http_event.to_event(original_event)
     }
 
     /// Handle SSL events (HTTP request/response data)

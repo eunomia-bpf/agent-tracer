@@ -55,19 +55,34 @@ impl Runner for SslRunner {
         
         // Convert JSON values directly to framework Events
         let event_stream = json_stream.map(|json_value| {
-            // Extract timestamp if available, otherwise use current time
+            // Extract timestamp if available, otherwise panic
             let timestamp = json_value.get("timestamp_ns")
                 .and_then(|v| v.as_u64())
                 .unwrap_or_else(|| {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos() as u64
+                    panic!("Missing timestamp_ns field in ssl event: {}", json_value);
                 });
+            
+            // Extract pid - panic if not found
+            let pid = json_value.get("pid")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32)
+                .unwrap_or_else(|| {
+                    panic!("Missing pid field in ssl event: {}", json_value);
+                });
+            
+            // Extract comm - panic if not found
+            let comm = json_value.get("comm")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    panic!("Missing comm field in ssl event: {}", json_value);
+                })
+                .to_string();
             
             Event::new_with_timestamp(
                 timestamp,
                 "ssl".to_string(), // source is runner name
+                pid,
+                comm,
                 json_value,
             )
         });

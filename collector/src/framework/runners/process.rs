@@ -66,15 +66,30 @@ impl Runner for ProcessRunner {
             let timestamp = json_value.get("timestamp")
                 .and_then(|v| v.as_u64())
                 .unwrap_or_else(|| {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
+                    panic!("Missing timestamp field in process event: {}", json_value);
                 });
+            
+            // Extract pid - panic if not found
+            let pid = json_value.get("pid")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32)
+                .unwrap_or_else(|| {
+                    panic!("Missing pid field in process event: {}", json_value);
+                });
+            
+            // Extract comm - panic if not found
+            let comm = json_value.get("comm")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    panic!("Missing comm field in process event: {}", json_value);
+                })
+                .to_string();
             
             Event::new_with_timestamp(
                 timestamp,
                 "process".to_string(), // source is runner name
+                pid,
+                comm,
                 json_value,
             )
         });
