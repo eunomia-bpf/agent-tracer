@@ -55,45 +55,54 @@ enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Test both runners with embedded binaries
+    /// Combined SSL and Process monitoring with configurable options
     Agent {
-        /// Filter by process command name (comma-separated list)
-        #[arg(short = 'c', long)]
-        comm: Option<String>,
-        /// Filter by process PID
-        #[arg(short = 'p', long)]
-        pid: Option<u32>,
-    },
-    /// Flexible agent monitoring with configurable runners and analyzers
-    AgentFlex {
         /// Enable SSL monitoring
-        #[arg(long)]
+        #[arg(long, default_value = "true")]
         ssl: bool,
-        /// SSL filter patterns
+        /// SSL filter by PID
+        #[arg(long)]
+        ssl_pid: Option<u32>,
+        /// SSL filter by UID
+        #[arg(long)]
+        ssl_uid: Option<u32>,
+        /// SSL filter by command name
+        #[arg(long)]
+        ssl_comm: Option<String>,
+        /// SSL filter patterns (for analyzer-level filtering)
         #[arg(long)]
         ssl_filter: Vec<String>,
-        /// Enable HTTP parsing for SSL
+        /// Show SSL handshake events
         #[arg(long)]
+        ssl_handshake: bool,
+        /// Enable HTTP parsing for SSL
+        #[arg(long, default_value = "true")]
         ssl_http: bool,
         /// Include raw SSL data in HTTP parser events
         #[arg(long)]
         ssl_raw_data: bool,
         
         /// Enable process monitoring
-        #[arg(long)]
+        #[arg(long, default_value = "true")]
         process: bool,
-        /// Process command filter
+        /// Process command filter (comma-separated list)
         #[arg(short = 'c', long)]
         comm: Option<String>,
         /// Process PID filter
         #[arg(short = 'p', long)]
         pid: Option<u32>,
+        /// Process duration filter (minimum duration in ms)
+        #[arg(long)]
+        duration: Option<u32>,
+        /// Process filtering mode (0=all, 1=proc, 2=filter)
+        #[arg(long)]
+        mode: Option<u32>,
         
-        /// Global HTTP filters (applied to merged stream)
+        /// HTTP filters (applied to SSL runner after HTTP parsing)
         #[arg(long)]
         http_filter: Vec<String>,
         /// Output file
-        #[arg(short = 'o', long)]
+        #[arg(short = 'o', long, default_value = "agent.log")]
         output: Option<String>,
         /// Suppress console output
         #[arg(short, long)]
@@ -111,100 +120,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
         Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
-        Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
-        Commands::AgentFlex { ssl, ssl_filter, ssl_http, ssl_raw_data, process, comm, pid, http_filter, output, quiet } => run_agent_flex(&binary_extractor, *ssl, ssl_filter, *ssl_http, *ssl_raw_data, *process, comm.as_deref(), *pid, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
+        Commands::Agent { ssl, ssl_pid, ssl_uid, ssl_comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, comm, pid, duration, mode, http_filter, output, quiet } => run_agent(&binary_extractor, *ssl, *ssl_pid, *ssl_uid, ssl_comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, comm.as_deref(), *pid, *duration, *mode, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
 }
 
-/// Test both runners with embedded binaries
-async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, pid: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Testing Both Runners");
-    println!("{}", "=".repeat(60));
-    
-    // Build arguments for filtering
-    let mut args = Vec::new();
-    if let Some(comm_filter) = comm {
-        args.push("-c".to_string());
-        args.push(comm_filter.to_string());
-    }
-    if let Some(pid_filter) = pid {
-        args.push("-p".to_string());
-        args.push(pid_filter.to_string());
-    }
-    
-    let ssl_handle = {
-        let ssl_path = binary_extractor.get_sslsniff_path().to_path_buf();
-        let ssl_args = args.clone();
-        tokio::spawn(async move {
-            let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path);
-            
-            // Add filter arguments if any
-            if !ssl_args.is_empty() {
-                ssl_runner = ssl_runner.with_args(&ssl_args);
-            }
-            
-            ssl_runner = ssl_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
-            
-            match ssl_runner.run().await {
-                Ok(mut stream) => {
-                    let mut count = 0;
-                    println!("SSL Runner started, processing events...");
-                    while let Some(_event) = stream.next().await {
-                        count += 1;
-                    }
-                    println!("SSL Runner completed with {} events", count);
-                    count
-                }
-                Err(e) => {
-                    println!("SSL Runner error: {}", e);
-                    0
-                }
-            }
-        })
-    };
-    
-    let process_handle = {
-        let process_path = binary_extractor.get_process_path().to_path_buf();
-        let process_args = args.clone();
-        tokio::spawn(async move {
-            let mut process_runner = ProcessRunner::from_binary_extractor(process_path);
-            
-            // Add filter arguments if any
-            if !process_args.is_empty() {
-                process_runner = process_runner.with_args(&process_args);
-            }
-            
-            process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
-            
-            match process_runner.run().await {
-                Ok(mut stream) => {
-                    let mut count = 0;
-                    println!("Process Runner started, processing events...");
-                    while let Some(_event) = stream.next().await {
-                        count += 1;
-                    }
-                    println!("Process Runner completed with {} events", count);
-                    count
-                }
-                Err(e) => {
-                    println!("Process Runner error: {}", e);
-                    0
-                }
-            }
-        })
-    };
-    
-    let (ssl_count, process_count) = tokio::try_join!(ssl_handle, process_handle)?;
-    
-    println!("{}", "=".repeat(60));
-    println!("Both runners completed!");
-    println!("SSL events: {}", ssl_count);
-    println!("Process events: {}", process_count);
-    
-    Ok(())
-}
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
 async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, ssl_filter_patterns: &Vec<String>, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
@@ -297,36 +218,48 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
     Ok(())
 }
 
-/// Flexible agent monitoring with configurable runners and analyzers
-async fn run_agent_flex(
+/// Agent monitoring with configurable runners and analyzers
+async fn run_agent(
     binary_extractor: &BinaryExtractor,
     ssl_enabled: bool,
+    ssl_pid: Option<u32>,
+    ssl_uid: Option<u32>,
+    ssl_comm: Option<&str>,
     ssl_filter: &[String],
+    ssl_handshake: bool,
     ssl_http: bool,
     ssl_raw_data: bool,
     process_enabled: bool,
     comm: Option<&str>,
     pid: Option<u32>,
+    duration: Option<u32>,
+    mode: Option<u32>,
     http_filter: &[String],
     output: Option<&str>,
     quiet: bool,
 ) -> Result<(), RunnerError> {
-    println!("Flexible Agent Monitoring");
+    println!("Agent Monitoring");
     println!("{}", "=".repeat(60));
     
-    let mut agent = AgentRunner::new("configurable-agent");
+    let mut agent = AgentRunner::new("agent");
     
     // Add SSL runner if enabled
     if ssl_enabled {
         let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path());
         
-        // Configure SSL runner arguments
+        // Configure SSL runner arguments (sslsniff supports -p, -u, -c, -h, -v)
         let mut ssl_args = Vec::new();
-        if let Some(comm_filter) = comm {
+        if let Some(pid_filter) = ssl_pid {
+            ssl_args.extend(["-p".to_string(), pid_filter.to_string()]);
+        }
+        if let Some(uid_filter) = ssl_uid {
+            ssl_args.extend(["-u".to_string(), uid_filter.to_string()]);
+        }
+        if let Some(comm_filter) = ssl_comm {
             ssl_args.extend(["-c".to_string(), comm_filter.to_string()]);
         }
-        if let Some(pid_filter) = pid {
-            ssl_args.extend(["-p".to_string(), pid_filter.to_string()]);
+        if ssl_handshake {
+            ssl_args.push("--handshake".to_string());
         }
         if !ssl_args.is_empty() {
             ssl_runner = ssl_runner.with_args(&ssl_args);
@@ -346,23 +279,36 @@ async fn run_agent_flex(
                 HTTPParser::new().disable_raw_data()
             };
             ssl_runner = ssl_runner.add_analyzer(Box::new(http_parser));
+            
+            // Add HTTP filter to SSL runner if patterns are provided
+            if !http_filter.is_empty() {
+                ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPFilter::with_patterns(http_filter.to_vec())));
+            }
         }
         
         agent = agent.add_runner(Box::new(ssl_runner));
-        println!("✓ SSL monitoring enabled");
+        let http_filter_info = if ssl_http && !http_filter.is_empty() { 
+            format!(" with {} HTTP filter patterns", http_filter.len()) 
+        } else { 
+            String::new() 
+        };
+        println!("✓ SSL monitoring enabled{}", http_filter_info);
     }
     
     // Add process runner if enabled
     if process_enabled {
         let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path());
         
-        // Configure process runner arguments
+        // Configure process runner arguments (process supports -c, -d, -m, -v)
         let mut process_args = Vec::new();
         if let Some(comm_filter) = comm {
             process_args.extend(["-c".to_string(), comm_filter.to_string()]);
         }
-        if let Some(pid_filter) = pid {
-            process_args.extend(["-p".to_string(), pid_filter.to_string()]);
+        if let Some(duration_filter) = duration {
+            process_args.extend(["-d".to_string(), duration_filter.to_string()]);
+        }
+        if let Some(mode_filter) = mode {
+            process_args.extend(["-m".to_string(), mode_filter.to_string()]);
         }
         if !process_args.is_empty() {
             process_runner = process_runner.with_args(&process_args);
@@ -372,16 +318,12 @@ async fn run_agent_flex(
         println!("✓ Process monitoring enabled");
     }
     
-    // Ensure at least one runner is enabled
+    // Ensure at least one runner is enabled (this check is now redundant but kept for safety)
     if !ssl_enabled && !process_enabled {
         return Err("At least one monitoring type must be enabled (--ssl or --process)".into());
     }
     
-    // Add global analyzers
-    if !http_filter.is_empty() {
-        agent = agent.add_global_analyzer(Box::new(HTTPFilter::with_patterns(http_filter.to_vec())));
-        println!("✓ HTTP filtering enabled with {} patterns", http_filter.len());
-    }
+    // Add global analyzers (HTTP filter is now added to SSL runner instead)
     
     if let Some(output_path) = output {
         agent = agent.add_global_analyzer(Box::new(FileLogger::new(output_path).unwrap()));
