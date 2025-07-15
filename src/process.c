@@ -236,17 +236,10 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct event *e = data;
-	struct tm *tm;
-	char ts[32];
-	time_t t;
-
-	time(&t);
-	tm = localtime(&t);
-	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
 	printf("{");
 	printf("\"type\":\"event\",");
-	printf("\"timestamp\":\"%s\",", ts);
+	printf("\"timestamp\":%llu,", e->timestamp_ns);
 	
 	switch (e->type) {
 		case EVENT_TYPE_PROCESS:

@@ -278,7 +278,6 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	if (start == 0) {
 		start = event->timestamp_ns;
 	}
-	double time_s = (double)(event->timestamp_ns - start) / 1000000000;
 
 	char *rw_event[] = {
 		"READ/RECV",
@@ -291,7 +290,6 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	
 	// Basic fields - always include all fields
 	printf("\"function\":\"%s\",", rw_event[event->rw]);
-	printf("\"time_s\":%.9f,", time_s);
 	printf("\"timestamp_ns\":%llu,", event->timestamp_ns);
 	printf("\"comm\":\"%s\",", event->comm);
 	printf("\"pid\":%d,", event->pid);
