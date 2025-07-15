@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Event, GroupedEvents, ProcessedEvent } from '@/types/event';
 
 interface TimelineViewProps {
@@ -19,6 +19,8 @@ export function TimelineView({ events }: TimelineViewProps) {
   const [selectedSource, setSelectedSource] = useState<string>('');
   const [selectedComm, setSelectedComm] = useState<string>('');
   const [selectedPid, setSelectedPid] = useState<string>('');
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [scrollOffset, setScrollOffset] = useState<number>(0);
 
   // Process events with additional metadata
   const processedEvents: ProcessedEvent[] = useMemo(() => {
@@ -123,7 +125,22 @@ export function TimelineView({ events }: TimelineViewProps) {
     };
   }, [filteredEvents]);
 
-  const visibleTimeRange = timeRange || fullTimeRange;
+  const visibleTimeRange = useMemo(() => {
+    if (timeRange) return timeRange;
+    if (zoomLevel === 1) return fullTimeRange;
+    
+    // When zoomed, calculate the visible range based on zoom level and scroll offset
+    const zoomedSpan = (fullTimeRange.end - fullTimeRange.start) / zoomLevel;
+    const maxOffset = (fullTimeRange.end - fullTimeRange.start) - zoomedSpan;
+    const clampedOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+    
+    return {
+      start: fullTimeRange.start + clampedOffset,
+      end: fullTimeRange.start + clampedOffset + zoomedSpan
+    };
+  }, [timeRange, fullTimeRange, zoomLevel, scrollOffset]);
+  
+  const baseTimeSpan = fullTimeRange.end - fullTimeRange.start;
   const timeSpan = visibleTimeRange.end - visibleTimeRange.start;
 
   // Calculate position for an event in the timeline
@@ -131,6 +148,92 @@ export function TimelineView({ events }: TimelineViewProps) {
     if (timeSpan === 0) return 0;
     return ((timestamp - visibleTimeRange.start) / timeSpan) * 100;
   };
+
+  // Zoom functions
+  const zoomIn = () => {
+    setZoomLevel(prev => Math.min(prev * 1.5, 10));
+  };
+
+  const zoomOut = () => {
+    setZoomLevel(prev => Math.max(prev / 1.5, 0.1));
+  };
+
+  const resetZoom = () => {
+    setZoomLevel(1);
+    setScrollOffset(0);
+    setTimeRange(null);
+  };
+
+  // Scroll functions
+  const scrollLeft = () => {
+    const zoomedSpan = baseTimeSpan / zoomLevel;
+    const scrollStep = zoomedSpan * 0.1; // 10% of visible range
+    setScrollOffset(prev => Math.max(0, prev - scrollStep));
+  };
+
+  const scrollRight = () => {
+    const zoomedSpan = baseTimeSpan / zoomLevel;
+    const scrollStep = zoomedSpan * 0.1; // 10% of visible range
+    const maxOffset = baseTimeSpan - zoomedSpan;
+    setScrollOffset(prev => Math.min(maxOffset, prev + scrollStep));
+  };
+
+  // Handle mouse wheel zoom and scroll
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      // Zoom with Ctrl/Cmd + wheel
+      e.preventDefault();
+      const delta = e.deltaY;
+      if (delta < 0) {
+        zoomIn();
+      } else {
+        zoomOut();
+      }
+    } else if (zoomLevel > 1) {
+      // Horizontal scroll when zoomed
+      e.preventDefault();
+      const delta = e.deltaY;
+      const zoomedSpan = baseTimeSpan / zoomLevel;
+      const scrollStep = zoomedSpan * 0.05; // 5% of visible range
+      const maxOffset = baseTimeSpan - zoomedSpan;
+      
+      if (delta > 0) {
+        setScrollOffset(prev => Math.min(maxOffset, prev + scrollStep));
+      } else {
+        setScrollOffset(prev => Math.max(0, prev - scrollStep));
+      }
+    }
+  };
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          zoomIn();
+        } else if (e.key === '-') {
+          e.preventDefault();
+          zoomOut();
+        } else if (e.key === '0') {
+          e.preventDefault();
+          resetZoom();
+        }
+      } else if (zoomLevel > 1) {
+        // Arrow keys for scrolling when zoomed
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          scrollLeft();
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          scrollRight();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [zoomLevel, scrollLeft, scrollRight]);
 
   // Format duration
   const formatDuration = (ms: number) => {
@@ -155,9 +258,78 @@ export function TimelineView({ events }: TimelineViewProps) {
       <div className="border-b border-gray-200 p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">Timeline View</h2>
-          <div className="text-sm text-gray-600">
-            Duration: {formatDuration(timeSpan)} • {filteredEvents.length} events
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={zoomOut}
+                className="p-1 hover:bg-gray-100 rounded-md transition-colors"
+                title="Zoom Out"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6" />
+                </svg>
+              </button>
+              <span className="text-sm text-gray-600 font-mono min-w-[4rem] text-center">
+                {Math.round(zoomLevel * 100)}%
+              </span>
+              <button
+                onClick={zoomIn}
+                className="p-1 hover:bg-gray-100 rounded-md transition-colors"
+                title="Zoom In"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v6m3-3H9" />
+                </svg>
+              </button>
+              <button
+                onClick={resetZoom}
+                className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                title="Reset Zoom"
+              >
+                Reset
+              </button>
+            </div>
+            
+            {/* Scroll Controls - Only show when zoomed */}
+            {zoomLevel > 1 && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 rounded-md">
+                <button
+                  onClick={scrollLeft}
+                  className="p-1 hover:bg-gray-200 rounded-sm transition-colors"
+                  title="Scroll Left"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <span className="text-xs text-gray-600 px-2">Scroll</span>
+                <button
+                  onClick={scrollRight}
+                  className="p-1 hover:bg-gray-200 rounded-sm transition-colors"
+                  title="Scroll Right"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            <div className="text-sm text-gray-600">
+              Duration: {formatDuration(baseTimeSpan)} • {filteredEvents.length} events
+            </div>
           </div>
+        </div>
+        
+        {/* Zoom Help Text */}
+        <div className="text-xs text-gray-500 mb-2">
+          Use mouse wheel + Ctrl/Cmd to zoom, or Ctrl/Cmd + +/- keys. Press Ctrl/Cmd + 0 to reset.
+          {zoomLevel > 1 && (
+            <span className="ml-2 text-blue-600">
+              Scroll with mouse wheel or arrow keys when zoomed.
+            </span>
+          )}
         </div>
         
         {/* Filters */}
@@ -210,7 +382,7 @@ export function TimelineView({ events }: TimelineViewProps) {
       </div>
 
       {/* Timeline */}
-      <div className="p-4">
+      <div className="p-4" onWheel={handleWheel}>
         {timelineGroups.length === 0 ? (
           <div className="text-center text-gray-500 py-8">
             No events to display
@@ -248,6 +420,48 @@ export function TimelineView({ events }: TimelineViewProps) {
               })}
             </div>
 
+            {/* Scroll indicator/minimap - Only show when zoomed */}
+            {zoomLevel > 1 && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-600">Timeline Overview</span>
+                  <span className="text-xs text-gray-500">
+                    {Math.round((scrollOffset / (baseTimeSpan - timeSpan)) * 100)}% scrolled
+                  </span>
+                </div>
+                <div className="relative h-4 bg-gray-100 rounded-sm">
+                  {/* Full timeline background */}
+                  <div className="absolute inset-0 bg-gray-200 rounded-sm" />
+                  
+                  {/* Visible range indicator */}
+                  <div
+                    className="absolute top-0 h-full bg-blue-300 rounded-sm opacity-50"
+                    style={{
+                      left: `${(scrollOffset / baseTimeSpan) * 100}%`,
+                      width: `${(timeSpan / baseTimeSpan) * 100}%`
+                    }}
+                  />
+                  
+                  {/* Events dots in minimap */}
+                  {timelineGroups.map((group) => 
+                    group.events.map((event) => {
+                      const position = ((event.timestamp - fullTimeRange.start) / baseTimeSpan) * 100;
+                      return (
+                        <div
+                          key={event.id}
+                          className="absolute top-1 w-0.5 h-2 opacity-60"
+                          style={{
+                            left: `${position}%`,
+                            backgroundColor: group.color
+                          }}
+                        />
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Timeline Groups */}
             {timelineGroups.map((group) => (
               <div key={group.source} className="relative">
@@ -267,7 +481,7 @@ export function TimelineView({ events }: TimelineViewProps) {
 
                 {/* Timeline bar */}
                 <div className="relative h-8 bg-gray-50 rounded-md mb-2">
-                  {group.events.map((event, index) => {
+                  {group.events.map((event) => {
                     const position = getEventPosition(event.timestamp);
                     const isVisible = position >= 0 && position <= 100;
                     

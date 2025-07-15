@@ -66,7 +66,9 @@ pub mod common;
 pub mod ssl;
 pub mod process;
 pub mod fake; // Add fake runner for testing
+pub mod agent; // Add agent runner for flexible composition
 
 pub use ssl::SslRunner;
 pub use process::ProcessRunner;
-pub use fake::FakeRunner; // Export FakeRunner 
+pub use fake::FakeRunner; // Export FakeRunner
+pub use agent::AgentRunner; // Export AgentRunner 

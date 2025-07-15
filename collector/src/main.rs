@@ -5,7 +5,7 @@ mod framework;
 
 use framework::{
     binary_extractor::BinaryExtractor,
-    runners::{SslRunner, ProcessRunner, RunnerError, Runner},
+    runners::{SslRunner, ProcessRunner, AgentRunner, RunnerError, Runner},
     analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter}
 };
 
@@ -64,6 +64,41 @@ enum Commands {
         #[arg(short = 'p', long)]
         pid: Option<u32>,
     },
+    /// Flexible agent monitoring with configurable runners and analyzers
+    AgentFlex {
+        /// Enable SSL monitoring
+        #[arg(long)]
+        ssl: bool,
+        /// SSL filter patterns
+        #[arg(long)]
+        ssl_filter: Vec<String>,
+        /// Enable HTTP parsing for SSL
+        #[arg(long)]
+        ssl_http: bool,
+        /// Include raw SSL data in HTTP parser events
+        #[arg(long)]
+        ssl_raw_data: bool,
+        
+        /// Enable process monitoring
+        #[arg(long)]
+        process: bool,
+        /// Process command filter
+        #[arg(short = 'c', long)]
+        comm: Option<String>,
+        /// Process PID filter
+        #[arg(short = 'p', long)]
+        pid: Option<u32>,
+        
+        /// Global HTTP filters (applied to merged stream)
+        #[arg(long)]
+        http_filter: Vec<String>,
+        /// Output file
+        #[arg(short = 'o', long)]
+        output: Option<String>,
+        /// Suppress console output
+        #[arg(short, long)]
+        quiet: bool,
+    },
 }
 
 #[tokio::main]
@@ -77,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
+        Commands::AgentFlex { ssl, ssl_filter, ssl_http, ssl_raw_data, process, comm, pid, http_filter, output, quiet } => run_agent_flex(&binary_extractor, *ssl, ssl_filter, *ssl_http, *ssl_raw_data, *process, comm.as_deref(), *pid, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
@@ -258,5 +294,116 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
         // Events are processed by the analyzers in the chain
     }
 
+    Ok(())
+}
+
+/// Flexible agent monitoring with configurable runners and analyzers
+async fn run_agent_flex(
+    binary_extractor: &BinaryExtractor,
+    ssl_enabled: bool,
+    ssl_filter: &[String],
+    ssl_http: bool,
+    ssl_raw_data: bool,
+    process_enabled: bool,
+    comm: Option<&str>,
+    pid: Option<u32>,
+    http_filter: &[String],
+    output: Option<&str>,
+    quiet: bool,
+) -> Result<(), RunnerError> {
+    println!("Flexible Agent Monitoring");
+    println!("{}", "=".repeat(60));
+    
+    let mut agent = AgentRunner::new("configurable-agent");
+    
+    // Add SSL runner if enabled
+    if ssl_enabled {
+        let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path());
+        
+        // Configure SSL runner arguments
+        let mut ssl_args = Vec::new();
+        if let Some(comm_filter) = comm {
+            ssl_args.extend(["-c".to_string(), comm_filter.to_string()]);
+        }
+        if let Some(pid_filter) = pid {
+            ssl_args.extend(["-p".to_string(), pid_filter.to_string()]);
+        }
+        if !ssl_args.is_empty() {
+            ssl_runner = ssl_runner.with_args(&ssl_args);
+        }
+        
+        // Add SSL-specific analyzers
+        if !ssl_filter.is_empty() {
+            ssl_runner = ssl_runner.add_analyzer(Box::new(SSLFilter::with_patterns(ssl_filter.to_vec())));
+        }
+        
+        if ssl_http {
+            ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
+            
+            let http_parser = if ssl_raw_data {
+                HTTPParser::new()
+            } else {
+                HTTPParser::new().disable_raw_data()
+            };
+            ssl_runner = ssl_runner.add_analyzer(Box::new(http_parser));
+        }
+        
+        agent = agent.add_runner(Box::new(ssl_runner));
+        println!("✓ SSL monitoring enabled");
+    }
+    
+    // Add process runner if enabled
+    if process_enabled {
+        let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path());
+        
+        // Configure process runner arguments
+        let mut process_args = Vec::new();
+        if let Some(comm_filter) = comm {
+            process_args.extend(["-c".to_string(), comm_filter.to_string()]);
+        }
+        if let Some(pid_filter) = pid {
+            process_args.extend(["-p".to_string(), pid_filter.to_string()]);
+        }
+        if !process_args.is_empty() {
+            process_runner = process_runner.with_args(&process_args);
+        }
+        
+        agent = agent.add_runner(Box::new(process_runner));
+        println!("✓ Process monitoring enabled");
+    }
+    
+    // Ensure at least one runner is enabled
+    if !ssl_enabled && !process_enabled {
+        return Err("At least one monitoring type must be enabled (--ssl or --process)".into());
+    }
+    
+    // Add global analyzers
+    if !http_filter.is_empty() {
+        agent = agent.add_global_analyzer(Box::new(HTTPFilter::with_patterns(http_filter.to_vec())));
+        println!("✓ HTTP filtering enabled with {} patterns", http_filter.len());
+    }
+    
+    if let Some(output_path) = output {
+        agent = agent.add_global_analyzer(Box::new(FileLogger::new(output_path).unwrap()));
+        println!("✓ Logging to file: {}", output_path);
+    }
+    
+    if !quiet {
+        agent = agent.add_global_analyzer(Box::new(OutputAnalyzer::new()));
+        println!("✓ Console output enabled");
+    }
+    
+    println!("{}", "=".repeat(60));
+    println!("Starting flexible agent monitoring with {} runners and {} global analyzers...", 
+             agent.runner_count(), agent.analyzer_count());
+    println!("Press Ctrl+C to stop");
+    
+    let mut stream = agent.run().await?;
+    
+    // Consume the stream to actually process events
+    while let Some(_event) = stream.next().await {
+        // Events are processed by the analyzers in the chain
+    }
+    
     Ok(())
 }
