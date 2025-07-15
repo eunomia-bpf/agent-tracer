@@ -77,6 +77,8 @@ export function LogView({ events }: LogViewProps) {
       filtered = filtered.filter(event => 
         event.source.toLowerCase().includes(term) ||
         event.id.toLowerCase().includes(term) ||
+        event.comm.toLowerCase().includes(term) ||
+        event.pid.toString().includes(term) ||
         JSON.stringify(event.data).toLowerCase().includes(term)
       );
     }
@@ -87,7 +89,7 @@ export function LogView({ events }: LogViewProps) {
   const sources = Object.keys(groupedEvents);
 
   const formatEventSummary = (event: ProcessedEvent) => {
-    return `${event.source} event`;
+    return `${event.comm} (${event.pid})`;
   };
 
   return (
@@ -190,6 +192,14 @@ export function LogView({ events }: LogViewProps) {
                     <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${selectedEvent.sourceColor}`}>
                       {selectedEvent.source}
                     </span>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Process</label>
+                    <div className="text-sm text-gray-900">{selectedEvent.comm}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">PID</label>
+                    <div className="text-sm text-gray-900 font-mono">{selectedEvent.pid}</div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Timestamp</label>

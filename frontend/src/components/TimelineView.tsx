@@ -103,7 +103,7 @@ export function TimelineView({ events }: TimelineViewProps) {
 
   // Format event label for timeline
   const formatEventLabel = (event: ProcessedEvent) => {
-    return `${event.source} event`;
+    return `${event.comm} (${event.pid})`;
   };
 
   // Get event color based on source
@@ -238,18 +238,32 @@ export function TimelineView({ events }: TimelineViewProps) {
               </div>
               
               <div className="space-y-4">
-                <div className="flex items-center space-x-4">
-                  <div
-                    className="w-6 h-6 rounded-full"
-                    style={{ backgroundColor: getEventColor(selectedEvent) }}
-                  />
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <div className="font-medium text-gray-900">
-                      {formatEventLabel(selectedEvent)}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {selectedEvent.source} • {selectedEvent.formattedTime}
-                    </div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Process</label>
+                    <div className="text-sm text-gray-900">{selectedEvent.comm}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">PID</label>
+                    <div className="text-sm text-gray-900 font-mono">{selectedEvent.pid}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${selectedEvent.sourceColor}`}>
+                      {selectedEvent.source}
+                    </span>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
+                    <div className="text-sm text-gray-900">{selectedEvent.formattedTime}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Timestamp</label>
+                    <div className="text-sm text-gray-900">{selectedEvent.datetime.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Unix Timestamp</label>
+                    <div className="text-sm text-gray-900 font-mono">{selectedEvent.timestamp}</div>
                   </div>
                 </div>
 
