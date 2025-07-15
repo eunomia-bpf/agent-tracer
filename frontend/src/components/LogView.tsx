@@ -10,6 +10,8 @@ interface LogViewProps {
 export function LogView({ events }: LogViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSource, setSelectedSource] = useState<string>('');
+  const [selectedComm, setSelectedComm] = useState<string>('');
+  const [selectedPid, setSelectedPid] = useState<string>('');
   const [selectedEvent, setSelectedEvent] = useState<ProcessedEvent | null>(null);
 
   // Process events with additional metadata
@@ -64,12 +66,32 @@ export function LogView({ events }: LogViewProps) {
     return grouped;
   }, [processedEvents]);
 
-  // Filter events based on search and source
+  // Get unique comm values
+  const commValues = useMemo(() => {
+    const unique = new Set(processedEvents.map(event => event.comm));
+    return Array.from(unique).sort();
+  }, [processedEvents]);
+
+  // Get unique pid values
+  const pidValues = useMemo(() => {
+    const unique = new Set(processedEvents.map(event => event.pid.toString()));
+    return Array.from(unique).sort((a, b) => parseInt(a) - parseInt(b));
+  }, [processedEvents]);
+
+  // Filter events based on search, source, comm, and pid
   const filteredEvents = useMemo(() => {
     let filtered = processedEvents;
 
     if (selectedSource) {
       filtered = filtered.filter(event => event.source === selectedSource);
+    }
+
+    if (selectedComm) {
+      filtered = filtered.filter(event => event.comm === selectedComm);
+    }
+
+    if (selectedPid) {
+      filtered = filtered.filter(event => event.pid.toString() === selectedPid);
     }
 
     if (searchTerm) {
@@ -84,7 +106,7 @@ export function LogView({ events }: LogViewProps) {
     }
 
     return filtered;
-  }, [processedEvents, searchTerm, selectedSource]);
+  }, [processedEvents, searchTerm, selectedSource, selectedComm, selectedPid]);
 
   const sources = Object.keys(groupedEvents);
 
@@ -96,7 +118,7 @@ export function LogView({ events }: LogViewProps) {
     <div className="bg-white rounded-lg shadow-md">
       {/* Filters */}
       <div className="border-b border-gray-200 p-4">
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col gap-4">
           <div className="flex-1">
             <input
               type="text"
@@ -107,19 +129,51 @@ export function LogView({ events }: LogViewProps) {
             />
           </div>
           
-          <div className="flex-shrink-0">
-            <select
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Sources</option>
-              {sources.map(source => (
-                <option key={source} value={source}>
-                  {source} ({groupedEvents[source].length})
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <select
+                value={selectedSource}
+                onChange={(e) => setSelectedSource(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">All Sources</option>
+                {sources.map(source => (
+                  <option key={source} value={source}>
+                    {source} ({groupedEvents[source].length})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div className="flex-1">
+              <select
+                value={selectedComm}
+                onChange={(e) => setSelectedComm(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">All Processes</option>
+                {commValues.map(comm => (
+                  <option key={comm} value={comm}>
+                    {comm} ({processedEvents.filter(e => e.comm === comm).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div className="flex-1">
+              <select
+                value={selectedPid}
+                onChange={(e) => setSelectedPid(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">All PIDs</option>
+                {pidValues.map(pid => (
+                  <option key={pid} value={pid}>
+                    PID {pid} ({processedEvents.filter(e => e.pid.toString() === pid).length})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>

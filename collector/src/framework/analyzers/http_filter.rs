@@ -15,6 +15,10 @@ pub struct HTTPFilter {
     filters: Vec<FilterExpression>,
     /// Debug mode
     debug: bool,
+    /// Metrics (shared atomic counters for thread safety)
+    total_events_processed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    filtered_events_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    passed_events_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// A single filter expression that can evaluate HTTP events
@@ -52,6 +56,9 @@ impl HTTPFilter {
             exclude_patterns: Vec::new(),
             filters: Vec::new(),
             debug: false,
+            total_events_processed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            filtered_events_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            passed_events_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -90,6 +97,65 @@ impl HTTPFilter {
         }
 
         false
+    }
+
+    /// Get filtering metrics
+    pub fn get_metrics(&self) -> FilterMetrics {
+        FilterMetrics {
+            total_events_processed: self.total_events_processed.load(std::sync::atomic::Ordering::Relaxed),
+            filtered_events_count: self.filtered_events_count.load(std::sync::atomic::Ordering::Relaxed),
+            passed_events_count: self.passed_events_count.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Reset metrics counters
+    pub fn reset_metrics(&self) {
+        self.total_events_processed.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.filtered_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.passed_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Print current metrics to stderr
+    pub fn print_metrics(&self) {
+        let metrics = self.get_metrics();
+        eprintln!("[HTTPFilter Metrics] Total: {}, Filtered: {}, Passed: {}", 
+                  metrics.total_events_processed, 
+                  metrics.filtered_events_count, 
+                  metrics.passed_events_count);
+    }
+
+    /// Enable debug mode
+    pub fn with_debug(mut self) -> Self {
+        self.debug = true;
+        self
+    }
+}
+
+/// Metrics for HTTP filtering
+#[derive(Debug, Clone)]
+pub struct FilterMetrics {
+    pub total_events_processed: u64,
+    pub filtered_events_count: u64,
+    pub passed_events_count: u64,
+}
+
+impl FilterMetrics {
+    /// Calculate the filter rate as a percentage
+    pub fn filter_rate(&self) -> f64 {
+        if self.total_events_processed == 0 {
+            0.0
+        } else {
+            (self.filtered_events_count as f64 / self.total_events_processed as f64) * 100.0
+        }
+    }
+
+    /// Calculate the pass rate as a percentage
+    pub fn pass_rate(&self) -> f64 {
+        if self.total_events_processed == 0 {
+            0.0
+        } else {
+            (self.passed_events_count as f64 / self.total_events_processed as f64) * 100.0
+        }
     }
 }
 
@@ -347,22 +413,48 @@ impl Analyzer for HTTPFilter {
         let filters = self.filters.clone();
         let debug = self.debug;
         
+        // Clone the shared atomic counters for use in the stream
+        let total_counter = self.total_events_processed.clone();
+        let filtered_counter = self.filtered_events_count.clone();
+        let passed_counter = self.passed_events_count.clone();
+        
         let filtered_stream = stream.filter_map(move |event| {
             let filters = filters.clone();
+            let total_counter = total_counter.clone();
+            let filtered_counter = filtered_counter.clone();
+            let passed_counter = passed_counter.clone();
             
             async move {
-                // Create a temporary HTTPFilter to use the filtering logic
-                let temp_filter = HTTPFilter {
-                    name: "temp".to_string(),
-                    exclude_patterns: Vec::new(),
-                    filters,
-                    debug,
+                // Increment total events processed
+                total_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                
+                // Check if this is an HTTP parser event and should be filtered
+                let should_filter = if filters.is_empty() {
+                    false
+                } else if event.source != "http_parser" {
+                    false
+                } else {
+                    // Evaluate each filter expression
+                    let mut filtered = false;
+                    for filter in &filters {
+                        if filter.evaluate(&event.data) {
+                            if debug {
+                                eprintln!("[HTTPFilter DEBUG] Event filtered by: {}", filter.expression);
+                            }
+                            filtered = true;
+                            break;
+                        }
+                    }
+                    filtered
                 };
 
-                // If event should be filtered, return None (filter out)
-                if temp_filter.should_filter_event(&event) {
-                    None
+                if should_filter {
+                    // Increment filtered counter
+                    filtered_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    None // Filter out
                 } else {
+                    // Increment passed counter  
+                    passed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     Some(event) // Pass through
                 }
             }
@@ -465,5 +557,38 @@ mod tests {
         assert!(filter.evaluate(&get_request));
         assert!(filter.evaluate(&not_found_response));
         assert!(!filter.evaluate(&post_request));
+    }
+
+    #[test]
+    fn test_http_filter_metrics() {
+        let filter = HTTPFilter::with_patterns(vec!["request.method=GET".to_string()]);
+        
+        // Check initial metrics
+        let initial_metrics = filter.get_metrics();
+        assert_eq!(initial_metrics.total_events_processed, 0);
+        assert_eq!(initial_metrics.filtered_events_count, 0);
+        assert_eq!(initial_metrics.passed_events_count, 0);
+        assert_eq!(initial_metrics.filter_rate(), 0.0);
+        assert_eq!(initial_metrics.pass_rate(), 0.0);
+        
+        // Test metrics calculation
+        let metrics = FilterMetrics {
+            total_events_processed: 100,
+            filtered_events_count: 25,
+            passed_events_count: 75,
+        };
+        
+        assert_eq!(metrics.filter_rate(), 25.0);
+        assert_eq!(metrics.pass_rate(), 75.0);
+        
+        // Test edge case - no events processed
+        let empty_metrics = FilterMetrics {
+            total_events_processed: 0,
+            filtered_events_count: 0,
+            passed_events_count: 0,
+        };
+        
+        assert_eq!(empty_metrics.filter_rate(), 0.0);
+        assert_eq!(empty_metrics.pass_rate(), 0.0);
     }
 }

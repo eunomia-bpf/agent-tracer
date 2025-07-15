@@ -16,6 +16,9 @@ interface TimelineGroup {
 export function TimelineView({ events }: TimelineViewProps) {
   const [selectedEvent, setSelectedEvent] = useState<ProcessedEvent | null>(null);
   const [timeRange, setTimeRange] = useState<{ start: number; end: number } | null>(null);
+  const [selectedSource, setSelectedSource] = useState<string>('');
+  const [selectedComm, setSelectedComm] = useState<string>('');
+  const [selectedPid, setSelectedPid] = useState<string>('');
 
   // Process events with additional metadata
   const processedEvents: ProcessedEvent[] = useMemo(() => {
@@ -57,10 +60,45 @@ export function TimelineView({ events }: TimelineViewProps) {
     });
   }, [events]);
 
-  // Group events by source
+  // Get unique values for filters
+  const sources = useMemo(() => {
+    const unique = new Set(processedEvents.map(event => event.source));
+    return Array.from(unique).sort();
+  }, [processedEvents]);
+
+  const commValues = useMemo(() => {
+    const unique = new Set(processedEvents.map(event => event.comm));
+    return Array.from(unique).sort();
+  }, [processedEvents]);
+
+  const pidValues = useMemo(() => {
+    const unique = new Set(processedEvents.map(event => event.pid.toString()));
+    return Array.from(unique).sort((a, b) => parseInt(a) - parseInt(b));
+  }, [processedEvents]);
+
+  // Filter events based on selected filters
+  const filteredEvents = useMemo(() => {
+    let filtered = processedEvents;
+
+    if (selectedSource) {
+      filtered = filtered.filter(event => event.source === selectedSource);
+    }
+
+    if (selectedComm) {
+      filtered = filtered.filter(event => event.comm === selectedComm);
+    }
+
+    if (selectedPid) {
+      filtered = filtered.filter(event => event.pid.toString() === selectedPid);
+    }
+
+    return filtered;
+  }, [processedEvents, selectedSource, selectedComm, selectedPid]);
+
+  // Group filtered events by source
   const timelineGroups: TimelineGroup[] = useMemo(() => {
     const grouped: { [source: string]: ProcessedEvent[] } = {};
-    processedEvents.forEach(event => {
+    filteredEvents.forEach(event => {
       if (!grouped[event.source]) {
         grouped[event.source] = [];
       }
@@ -72,18 +110,18 @@ export function TimelineView({ events }: TimelineViewProps) {
       events: events.sort((a, b) => a.timestamp - b.timestamp),
       color: events[0]?.sourceColor || '#6B7280'
     }));
-  }, [processedEvents]);
+  }, [filteredEvents]);
 
   // Calculate time range
   const fullTimeRange = useMemo(() => {
-    if (processedEvents.length === 0) return { start: 0, end: 0 };
+    if (filteredEvents.length === 0) return { start: 0, end: 0 };
     
-    const timestamps = processedEvents.map(e => e.timestamp);
+    const timestamps = filteredEvents.map(e => e.timestamp);
     return {
       start: Math.min(...timestamps),
       end: Math.max(...timestamps)
     };
-  }, [processedEvents]);
+  }, [filteredEvents]);
 
   const visibleTimeRange = timeRange || fullTimeRange;
   const timeSpan = visibleTimeRange.end - visibleTimeRange.start;
@@ -115,10 +153,58 @@ export function TimelineView({ events }: TimelineViewProps) {
     <div className="bg-white rounded-lg shadow-md">
       {/* Timeline Header */}
       <div className="border-b border-gray-200 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">Timeline View</h2>
           <div className="text-sm text-gray-600">
-            Duration: {formatDuration(timeSpan)} • {processedEvents.length} events
+            Duration: {formatDuration(timeSpan)} • {filteredEvents.length} events
+          </div>
+        </div>
+        
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Sources</option>
+              {sources.map(source => (
+                <option key={source} value={source}>
+                  {source} ({processedEvents.filter(e => e.source === source).length})
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex-1">
+            <select
+              value={selectedComm}
+              onChange={(e) => setSelectedComm(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Processes</option>
+              {commValues.map(comm => (
+                <option key={comm} value={comm}>
+                  {comm} ({processedEvents.filter(e => e.comm === comm).length})
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex-1">
+            <select
+              value={selectedPid}
+              onChange={(e) => setSelectedPid(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All PIDs</option>
+              {pidValues.map(pid => (
+                <option key={pid} value={pid}>
+                  PID {pid} ({processedEvents.filter(e => e.pid.toString() === pid).length})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
