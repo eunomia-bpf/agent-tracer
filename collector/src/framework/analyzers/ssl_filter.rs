@@ -237,11 +237,59 @@ impl FilterExpression {
                     _ => "exact",
                 }.to_string();
 
-                return FilterNode::Condition { field, operator, value };
+                // Process escape sequences in the value
+                let processed_value = Self::process_escape_sequences(&value);
+                return FilterNode::Condition { field, operator, value: processed_value };
             }
         }
 
         FilterNode::Empty
+    }
+
+    /// Process escape sequences in filter values
+    fn process_escape_sequences(value: &str) -> String {
+        let mut result = String::new();
+        let mut chars = value.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(&next_ch) = chars.peek() {
+                    match next_ch {
+                        'r' => {
+                            chars.next(); // consume the 'r'
+                            result.push('\r');
+                        }
+                        'n' => {
+                            chars.next(); // consume the 'n'
+                            result.push('\n');
+                        }
+                        't' => {
+                            chars.next(); // consume the 't'
+                            result.push('\t');
+                        }
+                        '\\' => {
+                            chars.next(); // consume the second '\'
+                            result.push('\\');
+                        }
+                        '"' => {
+                            chars.next(); // consume the '"'
+                            result.push('"');
+                        }
+                        _ => {
+                            // Keep the backslash for unknown escape sequences
+                            result.push(ch);
+                        }
+                    }
+                } else {
+                    // Backslash at end of string
+                    result.push(ch);
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        result
     }
 
     /// Evaluate this filter expression against SSL event data
@@ -537,5 +585,36 @@ mod tests {
         
         assert_eq!(metrics.filter_rate(), 30.0);
         assert_eq!(metrics.pass_rate(), 70.0);
+    }
+
+    #[test]
+    fn test_escape_sequence_processing() {
+        // Test escape sequence processing
+        let processed = FilterExpression::process_escape_sequences("0\\r\\n\\r\\n");
+        assert_eq!(processed, "0\r\n\r\n");
+        
+        let processed2 = FilterExpression::process_escape_sequences("hello\\tworld\\n");
+        assert_eq!(processed2, "hello\tworld\n");
+        
+        let processed3 = FilterExpression::process_escape_sequences("quote\\\"test\\\\");
+        assert_eq!(processed3, "quote\"test\\");
+        
+        // Test with actual SSL data pattern
+        let filter = FilterExpression::parse("data=0\\r\\n\\r\\n");
+        
+        let matching_event = json!({
+            "data": "0\r\n\r\n",
+            "function": "READ/RECV",
+            "len": 5
+        });
+        
+        let non_matching_event = json!({
+            "data": "HTTP/1.1 200 OK",
+            "function": "READ/RECV",
+            "len": 15
+        });
+        
+        assert!(filter.evaluate(&matching_event));
+        assert!(!filter.evaluate(&non_matching_event));
     }
 }
