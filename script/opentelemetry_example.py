@@ -52,7 +52,7 @@ trace.get_tracer_provider().add_span_processor(span_processor)
 
 # --- 4. Read and Process SSL Timeline Data ---
 
-SSL_TIMELINE_FILE = '/home/yunwei37/agent-tracer/script/results/ssl_only/claude_code/analysis_gen_readme/ssl_timeline.json'
+SSL_TIMELINE_FILE = '/home/yunwei37/agent-tracer/script/results/ssl_only/claude_code/analysis_modify_code/ssl_data_only.json'
 
 try:
     with open(SSL_TIMELINE_FILE, 'r') as f:
@@ -64,39 +64,62 @@ except json.JSONDecodeError:
     logging.error(f"Error: Could not decode JSON from {SSL_TIMELINE_FILE}.")
     exit(1)
 
-with tracer.start_as_current_span("process_ssl_timeline") as parent_span:
-    parent_span.set_attribute("timeline.source_file", ssl_data['analysis_metadata']['source_file'])
-    parent_span.set_attribute("timeline.total_entries", ssl_data['analysis_metadata']['total_timeline_entries'])
+with tracer.start_as_current_span("process_ssl_data") as parent_span:
+    parent_span.set_attribute("data.source_file", ssl_data['analysis_metadata']['source_file'])
+    parent_span.set_attribute("data.total_entries", ssl_data['summary']['total_data_entries'])
+    parent_span.set_attribute("data.total_requests", ssl_data['summary']['total_requests'])
+    parent_span.set_attribute("data.total_responses", ssl_data['summary']['total_responses'])
+    parent_span.set_attribute("data.total_bytes", ssl_data['summary']['data_transfer_sizes']['total_data_bytes'])
+    parent_span.set_attribute("session.duration_seconds", ssl_data['summary']['session_duration_seconds'])
 
-    logging.info(f"Processing SSL timeline from {SSL_TIMELINE_FILE}")
+    logging.info(f"Processing SSL data from {SSL_TIMELINE_FILE}")
+    logging.info(f"Total entries: {ssl_data['summary']['total_data_entries']}, Requests: {ssl_data['summary']['total_requests']}, Responses: {ssl_data['summary']['total_responses']}")
 
-    for entry in ssl_data['timeline']:
-        with tracer.start_as_current_span(f"timeline_entry_{entry.get('type', 'unknown')}") as child_span:
+    for entry in ssl_data['data_timeline']:
+        with tracer.start_as_current_span(f"ssl_data_{entry.get('type', 'unknown')}") as child_span:
             child_span.set_attribute("entry.type", entry.get('type'))
-            child_span.set_attribute("entry.function", entry.get('function'))
-            child_span.set_attribute("entry.pid", entry.get('pid'))
-            child_span.set_attribute("entry.comm", entry.get('comm'))
+            child_span.set_attribute("entry.timestamp", entry.get('timestamp'))
+            child_span.set_attribute("entry.tid", entry.get('tid'))
 
-            # Add relevant data from the entry as log attributes
-            log_attributes = {
-                "entry_type": entry.get('type'),
-                "entry_function": entry.get('function'),
-                "entry_pid": entry.get('pid'),
-                "entry_comm": entry.get('comm'),
-                "entry_timestamp": entry.get('timestamp'),
-            }
-
+            # Add span events for HTTP requests and responses
             if entry.get('type') == 'request':
-                log_attributes["request_method"] = entry.get('method')
-                log_attributes["request_path"] = entry.get('path')
-                log_attributes["request_host"] = entry.get('headers', {}).get('host')
-                logging.info(f"Request: {entry.get('method')} {entry.get('path')}", extra=log_attributes)
+                child_span.set_attribute("http.method", entry.get('method'))
+                child_span.set_attribute("http.path", entry.get('path'))
+                
+                # Extract JSON body data for analysis
+                json_body = entry.get('json_body', {})
+                if json_body:
+                    events = json_body.get('events', [])
+                    if events:
+                        event = events[0]
+                        child_span.set_attribute("event.name", event.get('eventName'))
+                        metadata = event.get('metadata', {})
+                        child_span.set_attribute("event.model", metadata.get('model'))
+                        child_span.set_attribute("event.provider", metadata.get('provider'))
+                        child_span.set_attribute("event.session_id", metadata.get('sessionId'))
+                        child_span.set_attribute("event.user_type", metadata.get('userType'))
+                
+                child_span.add_event("HTTP Request", {
+                    "http.method": entry.get('method'),
+                    "http.path": entry.get('path'),
+                    "body_size": len(entry.get('body', '')),
+                    "has_json_body": bool(entry.get('json_body'))
+                })
+                
             elif entry.get('type') == 'response':
-                log_attributes["response_status_code"] = entry.get('status_code')
-                log_attributes["response_status_text"] = entry.get('status_text')
-                logging.info(f"Response: {entry.get('status_code')} {entry.get('status_text')}", extra=log_attributes)
-            else:
-                logging.info(f"Other entry type: {entry.get('type')}", extra=log_attributes)
+                # For responses, extract any available metadata
+                json_body = entry.get('json_body', {})
+                if json_body and isinstance(json_body, dict):
+                    child_span.set_attribute("response.has_data", True)
+                    if 'error' in json_body:
+                        child_span.set_attribute("response.has_error", True)
+                    if 'completion' in json_body:
+                        child_span.set_attribute("response.has_completion", True)
+                
+                child_span.add_event("HTTP Response", {
+                    "body_size": len(entry.get('body', '')),
+                    "has_json_body": bool(entry.get('json_body'))
+                })
 
 print("\nSSL timeline processing complete. Spans and logs have been sent to Jaeger.")
 print("You can view the traces and logs in the Jaeger UI.")

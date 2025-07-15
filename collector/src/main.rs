@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, FileLogger, ChunkMerger}
+    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -24,15 +24,21 @@ struct Cli {
 enum Commands {
     /// Analyze SSL traffic with raw JSON output
     Ssl {
-        /// Enable HTTP chunk merging for SSL traffic
+        /// Enable SSE processing for SSL traffic
         #[arg(long)]
         sse_merge: bool,
+        /// Suppress console output
+        #[arg(short, long)]
+        quiet: bool,
         /// Additional arguments to pass to the SSL binary
         #[arg(last = true)]
         args: Vec<String>,
     },
     /// Test process runner with embedded binary
     Process {
+        /// Suppress console output
+        #[arg(short, long)]
+        quiet: bool,
         /// Additional arguments to pass to the process binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -56,8 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, args } => run_raw_ssl(&binary_extractor, *sse_merge, args).await.map_err(convert_runner_error)?,
-        Commands::Process { args } => run_raw_process(&binary_extractor, args).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *quiet, args).await.map_err(convert_runner_error)?,
+        Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
     }
     
@@ -155,7 +161,7 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
 }
 
 /// Show raw SSL events as JSON with optional chunk merging
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -167,17 +173,20 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
         ssl_runner = ssl_runner.with_args(args);
     }
     
-    // Add chunk merger if requested
+    // Add SSE processor if requested
     if enable_chunk_merger {
-        ssl_runner = ssl_runner.add_analyzer(Box::new(ChunkMerger::new_with_timeout(30000)));
-        println!("Starting SSL event stream with chunk merging enabled (press Ctrl+C to stop):");
+        ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
+        println!("Starting SSL event stream with SSE processing enabled (press Ctrl+C to stop):");
     } else {
         println!("Starting SSL event stream with raw JSON output (press Ctrl+C to stop):");
     }
     
     ssl_runner = ssl_runner
-        .add_analyzer(Box::new(FileLogger::new("ssl.log").unwrap()))
-        .add_analyzer(Box::new(OutputAnalyzer::new()));
+        .add_analyzer(Box::new(FileLogger::new("ssl.log").unwrap()));
+    
+    if !quiet {
+        ssl_runner = ssl_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
+    }
     
     let mut stream = ssl_runner.run().await?;
     
@@ -190,7 +199,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
 }
 
 /// Show raw process events as JSON
-async fn run_raw_process(binary_extractor: &BinaryExtractor, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw Process Events");
     println!("{}", "=".repeat(60));
     
@@ -202,7 +211,9 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, args: &Vec<String>)
         process_runner = process_runner.with_args(args);
     }
     
-    process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
+    if !quiet {
+        process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
+    }
     
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;

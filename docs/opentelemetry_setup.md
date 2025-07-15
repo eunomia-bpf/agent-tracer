@@ -18,7 +18,7 @@ Jaeger provides an all-in-one Docker image that includes the collector, query, a
 To start Jaeger, run the following command in your terminal:
 
 ```bash
-docker run -d --name jaeger -p 16686:16686 -p 4317:4317 -p 4318:4318 jaegertracing/all-in-one:latest
+docker run --replace -d --name jaeger -p 16686:16686 -p 4317:4317 -p 4318:4318 jaegertracing/all-in-one:latest
 ```
 
 *   `-d`: Runs the container in detached mode (in the background).
