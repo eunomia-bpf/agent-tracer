@@ -19,6 +19,7 @@ pub mod output;
 pub mod file_logger;
 pub mod sse_processor;
 pub mod http_parser;
+pub mod event;
 
 #[cfg(test)]
 mod sse_processor_tests;

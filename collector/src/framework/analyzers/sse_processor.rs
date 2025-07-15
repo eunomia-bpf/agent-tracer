@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 
+use super::event::SSEProcessorEvent;
+
 /// SSE Event Processor that merges Server-Sent Events content fragments
 pub struct SSEProcessor {
     name: String,
@@ -30,6 +32,10 @@ struct SSEAccumulator {
     last_update: u64,
     /// Track if we've seen a message_start event
     has_message_start: bool,
+    /// Start timestamp of the SSE event stream
+    start_time: u64,
+    /// End timestamp of the SSE event stream
+    end_time: u64,
 }
 
 /// Parsed SSE event - matches ssl_log_analyzer.py structure
@@ -369,41 +375,53 @@ impl SSEProcessor {
         accumulator: &SSEAccumulator,
         original_event: &Event,
     ) -> Event {
-        let merged_content = if !accumulator.accumulated_json.is_empty() {
+        // Process JSON content if available
+        let json_content = if !accumulator.accumulated_json.is_empty() {
             // Try to parse accumulated JSON
             match serde_json::from_str::<Value>(&accumulator.accumulated_json) {
                 Ok(parsed_json) => serde_json::to_string_pretty(&parsed_json).unwrap_or(accumulator.accumulated_json.clone()),
                 Err(_) => accumulator.accumulated_json.clone(),
             }
         } else {
-            accumulator.accumulated_text.clone()
+            String::new()
         };
 
-        Event::new(
-            "sse_processor".to_string(),
-            json!({
-                "connection_id": connection_id,
-                "message_id": accumulator.message_id,
-                "original_source": "ssl",
-                "function": original_event.data.get("function").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown"),
-                "comm": original_event.data.get("comm").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown"),
-                "pid": original_event.data.get("pid").unwrap_or(&json!(0)),
-                "tid": original_event.data.get("tid").unwrap_or(&json!(0)),
-                "timestamp_ns": original_event.data.get("timestamp_ns").unwrap_or(&json!(0)),
-                "merged_content": merged_content,
-                "content_type": if !accumulator.accumulated_json.is_empty() { "json" } else { "text" },
-                "total_size": merged_content.len(),
-                "event_count": accumulator.events.len(),
-                "has_message_start": accumulator.has_message_start,
-                "sse_events": accumulator.events.iter().map(|e| json!({
-                    "event": e.event,
-                    "data": e.data,
-                    "id": e.id,
-                    "parsed_data": e.parsed_data,
-                    "raw_data": e.raw_data
-                })).collect::<Vec<_>>()
-            })
-        )
+        // Text content is always available
+        let text_content = accumulator.accumulated_text.clone();
+
+        // Convert SSE events to JSON format
+        let sse_events_json: Vec<Value> = accumulator.events.iter().map(|e| json!({
+            "event": e.event,
+            "data": e.data,
+            "id": e.id,
+            "parsed_data": e.parsed_data,
+            "raw_data": e.raw_data
+        })).collect();
+
+        // Calculate total size from both content types
+        let total_size = json_content.len() + text_content.len();
+
+        // Create SSE processor event with timing information
+        let sse_processor_event = SSEProcessorEvent::new(
+            connection_id,
+            accumulator.message_id.clone(),
+            accumulator.start_time,
+            accumulator.end_time,
+            "ssl".to_string(),
+            original_event.data.get("function").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown").to_string(),
+            original_event.data.get("comm").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown").to_string(),
+            original_event.data.get("pid").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
+            original_event.data.get("tid").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
+            json_content,
+            text_content,
+            total_size,
+            accumulator.events.len(),
+            accumulator.has_message_start,
+            sse_events_json,
+        );
+
+        // Convert to framework Event
+        sse_processor_event.to_event()
     }
 }
 
@@ -537,10 +555,13 @@ impl Analyzer for SSEProcessor {
                     is_complete: false,
                     last_update: event.timestamp,
                     has_message_start: false,
+                    start_time: event.timestamp,
+                    end_time: event.timestamp,
                 });
                 
-                // Update last update time
+                // Update last update time and end time
                 accumulator.last_update = event.timestamp;
+                accumulator.end_time = event.timestamp;
                 
                 // Accumulate content from SSE events
                 Self::accumulate_content(accumulator, &sse_events, debug);
