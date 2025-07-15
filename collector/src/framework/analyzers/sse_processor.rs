@@ -15,6 +15,8 @@ pub struct SSEProcessor {
     sse_buffers: Arc<Mutex<HashMap<String, SSEAccumulator>>>,
     /// Timeout for incomplete SSE streams (in milliseconds)
     timeout_ms: u64,
+    /// Enable debug output (matches Python quiet flag)
+    debug: bool,
 }
 
 /// Accumulator for SSE events belonging to the same message
@@ -45,12 +47,31 @@ impl SSEProcessor {
         Self::new_with_timeout(30_000)
     }
 
+    /// Create a new SSEProcessor with debug output enabled
+    pub fn new_with_debug() -> Self {
+        SSEProcessor {
+            name: "SSEProcessor".to_string(),
+            sse_buffers: Arc::new(Mutex::new(HashMap::new())),
+            timeout_ms: 30_000,
+            debug: true,
+        }
+    }
+
     /// Create a new SSEProcessor with custom timeout
     pub fn new_with_timeout(timeout_ms: u64) -> Self {
         SSEProcessor {
             name: "SSEProcessor".to_string(),
             sse_buffers: Arc::new(Mutex::new(HashMap::new())),
             timeout_ms,
+            debug: true,
+        }
+    }
+
+    /// Debug print function - only prints if debug is enabled (matches Python debug_print)
+    fn debug_print(&self, message: &str) {
+        if self.debug {
+            eprintln!("{}", message);
+            std::io::stdout().flush().unwrap();
         }
     }
 
@@ -76,15 +97,8 @@ impl SSEProcessor {
     pub fn parse_sse_events_from_chunk(chunk_content: &str) -> Vec<SSEEvent> {
         let mut events = Vec::new();
         
-        eprintln!("[DEBUG] Parsing SSE chunk content (length: {}): {:?}", 
-                 chunk_content.len(), chunk_content);
-        std::io::stdout().flush().unwrap();
-        
         // Split by double newlines to separate events - matches Python: re.split(r'\n\s*\n', chunk_content)
         let event_blocks: Vec<&str> = chunk_content.split("\n\n").collect();
-        
-        eprintln!("[DEBUG] Split into {} event blocks", event_blocks.len());
-        std::io::stdout().flush().unwrap();
         
         for block in event_blocks {
             if block.trim().is_empty() {
@@ -127,27 +141,6 @@ impl SSEProcessor {
             }
             
             if event.event.is_some() || event.data.is_some() {
-                // Debug output for each parsed event
-                if let Some(ref event_type) = event.event {
-                    eprintln!("[DEBUG] Parsed SSE event: type='{}', has_data={}", 
-                             event_type, event.data.is_some());
-                    if event_type == "content_block_delta" && event.parsed_data.is_some() {
-                        if let Some(ref parsed) = event.parsed_data {
-                            if let Some(delta) = parsed.get("delta") {
-                                if let Some(text) = delta.get("text") {
-                                    eprintln!("[DEBUG]   - text_delta: {:?}", text);
-                                }
-                                if let Some(thinking) = delta.get("thinking") {
-                                    eprintln!("[DEBUG]   - thinking_delta: {:?}", thinking);
-                                }
-                                if let Some(partial_json) = delta.get("partial_json") {
-                                    eprintln!("[DEBUG]   - partial_json: {:?}", partial_json);
-                                }
-                            }
-                        }
-                    }
-                    std::io::stdout().flush().unwrap();
-                }
                 events.push(event);
             }
         }
@@ -157,49 +150,40 @@ impl SSEProcessor {
 
     /// Parse SSE events from raw SSL data
     pub fn parse_sse_events(data: &str) -> Vec<SSEEvent> {
-        eprintln!("[DEBUG] Raw SSL data before cleaning: {:?}", data);
-        std::io::stdout().flush().unwrap();
-        
         // Clean up chunked encoding first
         let clean_data = Self::clean_chunked_content(data);
-        
-        eprintln!("[DEBUG] Data after cleaning: {:?}", clean_data);
-        std::io::stdout().flush().unwrap();
         
         // Use the chunk parser
         Self::parse_sse_events_from_chunk(&clean_data)
     }
 
-    /// Clean HTTP chunked encoding artifacts from content
+    /// Clean HTTP chunked encoding artifacts from content - matches ssl_log_analyzer.py logic
     pub fn clean_chunked_content(content: &str) -> String {
-        let mut cleaned = String::new();
-        let mut skip_next = false;
+        let mut content_parts = Vec::new();
+        let lines: Vec<&str> = content.split("\r\n").collect();
         
-        for line in content.lines() {
-            if skip_next {
-                skip_next = false;
-                continue;
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim();
+            
+            // Check if this is a chunk size (hex number) - matches Python regex r'^[0-9a-fA-F]+$'
+            if !line.is_empty() && line.chars().all(|c| c.is_ascii_hexdigit()) {
+                let chunk_size = u32::from_str_radix(line, 16).unwrap_or(0);
+                if chunk_size == 0 {
+                    break;
+                }
+                
+                // Get the chunk content (next line)
+                i += 1;
+                if i < lines.len() {
+                    content_parts.push(lines[i]);
+                }
             }
-            
-            let trimmed = line.trim();
-            
-            // Skip HTTP chunk size lines (hex numbers followed by \r\n)
-            if trimmed.chars().all(|c| c.is_ascii_hexdigit()) && trimmed.len() < 10 {
-                skip_next = false; // Don't skip next line unless it's empty
-                continue;
-            }
-            
-            // Skip empty lines that are chunk separators
-            if trimmed.is_empty() {
-                continue;
-            }
-            
-            // Keep the actual content
-            cleaned.push_str(line);
-            cleaned.push('\n');
+            i += 1;
         }
         
-        cleaned
+        // Join all content and return - matches Python: '\n'.join(content_parts)
+        content_parts.join("\n")
     }
 
     /// Generate a connection ID from event data and SSE events
@@ -282,8 +266,6 @@ impl SSEProcessor {
                         if accumulator.message_id.is_none() {
                             accumulator.message_id = Self::extract_message_id(&[event.clone()]);
                         }
-                        eprintln!("[DEBUG] Found message_start event with ID: {:?}", accumulator.message_id);
-                        std::io::stdout().flush().unwrap();
                     }
                     "content_block_delta" => {
                         // Handle deltas - matches ssl_log_analyzer.py logic
@@ -320,38 +302,28 @@ impl SSEProcessor {
                 }
             }
         }
-        
-        // Debug output like ssl_log_analyzer.py
-        if !chunk_text_parts.is_empty() {
-            eprintln!("[DEBUG] Extracted text from chunk: {:?}", chunk_text_parts);
-            std::io::stdout().flush().unwrap();
-        }
     }
 
-    /// Warn about unexpected conditions
-    fn warn_if_unexpected(accumulator: &SSEAccumulator, connection_id: &str) {
+    /// Warn about unexpected conditions (debug output only)
+    fn warn_if_unexpected(&self, accumulator: &SSEAccumulator, connection_id: &str) {
         // Warn if we're completing without message_start
         if !accumulator.has_message_start && accumulator.events.len() > 0 {
-            eprintln!(" SSEProcessor: Completing SSE stream {} without message_start event - may be incomplete!", connection_id);
-            std::io::stdout().flush().unwrap();
+            self.debug_print(&format!(" SSEProcessor: Completing SSE stream {} without message_start event - may be incomplete!", connection_id));
         }
         
         // Warn if we have very little content
         if accumulator.accumulated_text.len() == 0 && accumulator.accumulated_json.len() == 0 && accumulator.events.len() > 3 {
-            eprintln!(" SSEProcessor: SSE stream {} has {} events but no accumulated content - possible parsing issue!", connection_id, accumulator.events.len());
-            std::io::stdout().flush().unwrap();
+            self.debug_print(&format!(" SSEProcessor: SSE stream {} has {} events but no accumulated content - possible parsing issue!", connection_id, accumulator.events.len()));
         }
         
         // Warn if JSON looks incomplete
         if !accumulator.accumulated_json.is_empty() && !accumulator.accumulated_json.starts_with('{') {
-            eprintln!(" SSEProcessor: SSE stream {} has JSON content that doesn't start with '{{' - may be incomplete: {}", connection_id, &accumulator.accumulated_json[..std::cmp::min(50, accumulator.accumulated_json.len())]);
-            std::io::stdout().flush().unwrap();
+            self.debug_print(&format!(" SSEProcessor: SSE stream {} has JSON content that doesn't start with '{{' - may be incomplete: {}", connection_id, &accumulator.accumulated_json[..std::cmp::min(50, accumulator.accumulated_json.len())]));
         }
         
         // Warn if buffer size limit was hit
         if accumulator.accumulated_text.len() > 10240 || accumulator.accumulated_json.len() > 10240 {
-            eprintln!(" SSEProcessor: SSE stream {} hit buffer size limit - may be incomplete!", connection_id);
-            std::io::stdout().flush().unwrap();
+            self.debug_print(&format!(" SSEProcessor: SSE stream {} hit buffer size limit - may be incomplete!", connection_id));
         }
     }
 
@@ -404,9 +376,9 @@ impl Analyzer for SSEProcessor {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
         let sse_buffers = Arc::clone(&self.sse_buffers);
 
-        eprintln!("[DEBUG] SSEProcessor: Starting SSE event processing");
-        std::io::stdout().flush().unwrap();
+        self.debug_print("[DEBUG] SSEProcessor: Starting SSE event processing");
         
+        let debug = self.debug;
         let processed_stream = stream.filter_map(move |event| {
             let buffers = Arc::clone(&sse_buffers);
             
@@ -432,9 +404,11 @@ impl Analyzer for SSEProcessor {
                     return Some(event); // Pass through if no SSE events found
                 }
 
-                eprintln!("[DEBUG] Processing SSE chunk at timestamp {} - found {} events", 
-                         event.timestamp, sse_events.len());
-                std::io::stdout().flush().unwrap();
+                if debug {
+                    eprintln!("[DEBUG] Processing SSE chunk at timestamp {} - found {} events", 
+                             event.timestamp, sse_events.len());
+                    std::io::stdout().flush().unwrap();
+                }
 
                 let connection_id = Self::generate_connection_id(&event, &sse_events);
                 
@@ -473,24 +447,23 @@ impl Analyzer for SSEProcessor {
                 
                 // Check if stream is complete
                 if Self::is_sse_complete(accumulator) {
-                    // Warn about unexpected conditions before completing
-                    Self::warn_if_unexpected(accumulator, &final_connection_id);
+                    // Note: warnings suppressed in non-debug mode
                     
                     // Add detailed debug output like ssl_log_analyzer.py _finalize_sse_response
-                    eprintln!("[DEBUG] Finalizing SSE response:");
-                    eprintln!("  - Text parts: {:?}", accumulator.accumulated_text);
-                    eprintln!("  - JSON parts: {:?}", accumulator.accumulated_json);
-                    eprintln!("  - Merged text: '{}'", accumulator.accumulated_text);
-                    eprintln!("  - Merged JSON: '{}'", accumulator.accumulated_json);
-                    eprintln!("  - Event count: {}", accumulator.events.len());
-                    std::io::stdout().flush().unwrap();
-                    
-                    eprintln!("[DEBUG] SSEProcessor: Completed SSE stream for connection {} - {} text chars, {} json chars, {} events", 
-                            final_connection_id, 
-                            accumulator.accumulated_text.len(),
-                            accumulator.accumulated_json.len(),
-                            accumulator.events.len());
-                    std::io::stdout().flush().unwrap();
+                    if debug {
+                        eprintln!("[DEBUG] Finalizing SSE response:");
+                        eprintln!("  - Text parts: {:?}", accumulator.accumulated_text);
+                        eprintln!("  - JSON parts: {:?}", accumulator.accumulated_json);
+                        eprintln!("  - Merged text: '{}'", accumulator.accumulated_text);
+                        eprintln!("  - Merged JSON: '{}'", accumulator.accumulated_json);
+                        eprintln!("  - Event count: {}", accumulator.events.len());
+                        eprintln!("[DEBUG] SSEProcessor: Completed SSE stream for connection {} - {} text chars, {} json chars, {} events", 
+                                final_connection_id, 
+                                accumulator.accumulated_text.len(),
+                                accumulator.accumulated_json.len(),
+                                accumulator.events.len());
+                        std::io::stdout().flush().unwrap();
+                    }
                     
                     // Create merged event
                     let merged_event = Self::create_merged_event(
