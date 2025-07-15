@@ -4,12 +4,10 @@ use crate::framework::core::Event;
 use crate::framework::analyzers::Analyzer;
 use async_trait::async_trait;
 use std::path::Path;
-use uuid::Uuid;
 use futures::stream::StreamExt;
 
 /// Runner for collecting process/system events
 pub struct ProcessRunner {
-    id: String,
     config: ProcessConfig,
     analyzers: Vec<Box<dyn Analyzer>>,
     executor: BinaryExecutor,
@@ -21,7 +19,6 @@ impl ProcessRunner {
     pub fn from_binary_extractor(binary_path: impl AsRef<Path>) -> Self {
         let path_str = binary_path.as_ref().to_string_lossy().to_string();
         Self {
-            id: Uuid::new_v4().to_string(),
             config: ProcessConfig::default(),
             analyzers: Vec::new(),
             executor: BinaryExecutor::new(path_str),
@@ -29,11 +26,6 @@ impl ProcessRunner {
         }
     }
 
-    /// Create a new ProcessRunner with a custom ID
-    pub fn with_id(mut self, id: String) -> Self {
-        self.id = id;
-        self
-    }
 
     /// Add additional command-line arguments to pass to the binary
     pub fn with_args<I, S>(mut self, args: I) -> Self 
@@ -80,8 +72,7 @@ impl Runner for ProcessRunner {
                         .as_secs()
                 });
             
-            Event::new_with_id_and_timestamp(
-                Uuid::new_v4().to_string(),
+            Event::new_with_timestamp(
                 timestamp,
                 "process".to_string(), // source is runner name
                 json_value,
@@ -101,7 +92,7 @@ impl Runner for ProcessRunner {
     }
 
     fn id(&self) -> String {
-        self.id.clone()
+        "process".to_string()
     }
 }
 
@@ -113,17 +104,16 @@ mod tests {
     fn test_process_runner_creation() {
         let runner = ProcessRunner::from_binary_extractor("/fake/path/process");
         assert_eq!(runner.name(), "process");
-        assert!(!runner.id().is_empty());
+        assert_eq!(runner.id(), "process");
         assert_eq!(runner.config.pid, None);
     }
 
     #[test]
     fn test_process_runner_with_custom_config() {
         let runner = ProcessRunner::from_binary_extractor("/fake/path/process")
-            .with_id("test-process".to_string())
             .pid(1234);
 
-        assert_eq!(runner.id(), "test-process");
+        assert_eq!(runner.id(), "process");
         assert_eq!(runner.config.pid, Some(1234));
     }
 
@@ -171,7 +161,6 @@ mod tests {
         
         // Create runner with real binary
         let mut runner = ProcessRunner::from_binary_extractor(binary_path)
-            .with_id("real-binary-test".to_string())
             .add_analyzer(Box::new(crate::framework::analyzers::OutputAnalyzer::new()));
         
         // Run the binary and collect events for 30 seconds

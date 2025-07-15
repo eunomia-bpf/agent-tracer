@@ -39,9 +39,8 @@ export function TimelineView({ events }: TimelineViewProps) {
         hour12: false,
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
-        fractionalSecondDigits: 3
-      });
+        second: '2-digit'
+      }) + '.' + datetime.getMilliseconds().toString().padStart(3, '0');
 
       // Assign colors to sources
       if (!sourceColorMap.has(event.source)) {

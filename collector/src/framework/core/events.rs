@@ -10,6 +10,18 @@ pub struct Event {
 }
 
 impl Event {
+    /// Create a new event with current timestamp
+    #[allow(dead_code)]
+    pub fn new(source: String, data: serde_json::Value) -> Self {
+        Self {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            source,
+            data,
+        }
+    }
 
     /// Create a new event with custom timestamp
     pub fn new_with_timestamp(

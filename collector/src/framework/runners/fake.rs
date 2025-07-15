@@ -3,14 +3,12 @@ use super::common::AnalyzerProcessor;
 use crate::framework::core::Event;
 use crate::framework::analyzers::Analyzer;
 use async_trait::async_trait;
-use uuid::Uuid;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 
 /// Fake runner that generates simulated SSL events for testing
 pub struct FakeRunner {
-    id: String,
     analyzers: Vec<Box<dyn Analyzer>>,
     event_count: usize,
     delay_ms: u64,
@@ -20,7 +18,6 @@ impl FakeRunner {
     /// Create a new FakeRunner
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
             analyzers: Vec::new(),
             event_count: 5, // Default to 5 pairs (10 events total)
             delay_ms: 100,   // 100ms delay between events
@@ -41,12 +38,6 @@ impl FakeRunner {
         self
     }
 
-    /// Set a custom ID for this runner
-    #[allow(dead_code)]
-    pub fn with_id(mut self, id: String) -> Self {
-        self.id = id;
-        self
-    }
 
     /// Add an analyzer to the chain
     #[allow(dead_code)]
@@ -81,7 +72,6 @@ impl FakeRunner {
         );
 
         Event {
-            id: Uuid::new_v4().to_string(),
             source: "ssl".to_string(),
             timestamp: current_time,
             data: json!({
@@ -123,7 +113,6 @@ impl FakeRunner {
         );
 
         Event {
-            id: Uuid::new_v4().to_string(),
             source: "ssl".to_string(),
             timestamp: current_time,
             data: json!({
@@ -206,7 +195,7 @@ impl Runner for FakeRunner {
     }
 
     fn id(&self) -> String {
-        self.id.clone()
+        "fake".to_string()
     }
 }
 
@@ -223,7 +212,6 @@ mod tests {
     #[tokio::test]
     async fn test_fake_runner_basic() {
         let mut runner = FakeRunner::new()
-            .with_id("test-basic".to_string())
             .event_count(2)
             .delay_ms(10); // Fast for testing
 
@@ -248,7 +236,6 @@ mod tests {
     #[tokio::test]
     async fn test_fake_runner_with_chunk_merger() {
         let mut runner = FakeRunner::new()
-            .with_id("test-chunk-merger".to_string())
             .event_count(2)
             .delay_ms(10)
             .add_analyzer(Box::new(SSEProcessor::new_with_timeout(5000))); // 5 second timeout
@@ -287,7 +274,6 @@ mod tests {
         let _ = fs::remove_file(test_log_file);
         
         let mut runner = FakeRunner::new()
-            .with_id("test-file-logger".to_string())
             .event_count(2)
             .delay_ms(10)
             .add_analyzer(Box::new(FileLogger::new_with_options(test_log_file, true, true).unwrap()));
@@ -350,7 +336,6 @@ mod tests {
         
         // Chain with multiple file loggers and output analyzers
         let mut runner = FakeRunner::new()
-            .with_id("test-multi".to_string())
             .event_count(2)
             .delay_ms(10)
             .add_analyzer(Box::new(SSEProcessor::new_with_timeout(5000)))
@@ -397,7 +382,6 @@ mod tests {
     async fn test_analyzer_chain_empty_stream() {
         // Test with zero events
         let mut runner = FakeRunner::new()
-            .with_id("test-empty".to_string())
             .event_count(0) // No events
             .delay_ms(10)
             .add_analyzer(Box::new(SSEProcessor::new_with_timeout(5000)))
@@ -421,7 +405,6 @@ mod tests {
     async fn test_analyzer_chain_with_mixed_event_sources() {
         // Test analyzer chain with events from different sources
         let mut runner = FakeRunner::new()
-            .with_id("test-mixed".to_string())
             .event_count(0) // Manual event generation
             .delay_ms(10);
 
@@ -533,7 +516,6 @@ mod tests {
         let max_events_ref = memory_tracker.max_events_seen.clone();
         
         let mut runner = FakeRunner::new()
-            .with_id("test-memory".to_string())
             .event_count(25) // 50 events total
             .delay_ms(1)
             .add_analyzer(Box::new(memory_tracker))
@@ -562,12 +544,11 @@ mod tests {
     fn test_fake_runner_builder_pattern() {
         // Test the fluent builder pattern
         let runner = FakeRunner::new()
-            .with_id("test-builder".to_string())
             .event_count(10)
             .delay_ms(50)
             .add_analyzer(Box::new(OutputAnalyzer::new()));
         
-        assert_eq!(runner.id(), "test-builder");
+        assert_eq!(runner.id(), "fake");
         // Note: event_count and delay_ms are private fields, so we can't test them directly
         // But we can verify the runner was created successfully and has the right ID
         assert_eq!(runner.name(), "fake");
@@ -588,7 +569,6 @@ mod tests {
         // 2. File logger for persistence 
         // 3. Output analyzer for real-time display
         let mut runner = FakeRunner::new()
-            .with_id("integration-test".to_string())
             .event_count(10) // 20 events total
             .delay_ms(25) // Realistic timing
             .add_analyzer(Box::new(SSEProcessor::new_with_timeout(10000))) // 10 second timeout

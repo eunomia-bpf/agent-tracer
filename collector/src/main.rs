@@ -99,8 +99,7 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
         let ssl_path = binary_extractor.get_sslsniff_path().to_path_buf();
         let ssl_args = args.clone();
         tokio::spawn(async move {
-            let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path)
-                .with_id("ssl-both".to_string());
+            let mut ssl_runner = SslRunner::from_binary_extractor(ssl_path);
             
             // Add filter arguments if any
             if !ssl_args.is_empty() {
@@ -131,8 +130,7 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
         let process_path = binary_extractor.get_process_path().to_path_buf();
         let process_args = args.clone();
         tokio::spawn(async move {
-            let mut process_runner = ProcessRunner::from_binary_extractor(process_path)
-                .with_id("process".to_string());
+            let mut process_runner = ProcessRunner::from_binary_extractor(process_path);
             
             // Add filter arguments if any
             if !process_args.is_empty() {
@@ -174,8 +172,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
-    let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path())
-        .with_id("ssl-raw".to_string());
+    let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path());
     
     // Add additional arguments if provided
     if !args.is_empty() {
@@ -232,8 +229,7 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
     println!("Raw Process Events");
     println!("{}", "=".repeat(60));
     
-    let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path())
-        .with_id("process-raw".to_string());
+    let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path());
     
     // Add additional arguments if provided
     if !args.is_empty() {

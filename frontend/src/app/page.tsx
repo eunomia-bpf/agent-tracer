@@ -1,6 +1,15 @@
-import Link from 'next/link';
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.push('/analyzer');
+  }, [router]);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-500 to-purple-600">
       <div className="text-center p-8 bg-white bg-opacity-10 rounded-lg backdrop-blur-md shadow-lg">
@@ -15,12 +24,9 @@ export default function Home() {
             Built with Next.js + TypeScript + Tailwind CSS
           </div>
           <div className="mt-8">
-            <Link
-              href="/timeline"
-              className="inline-block px-8 py-4 bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg text-white font-semibold transition-all duration-200 hover:scale-105"
-            >
-              View Timeline →
-            </Link>
+            <div className="text-white opacity-75">
+              Redirecting to analyzer...
+            </div>
           </div>
         </div>
       </div>

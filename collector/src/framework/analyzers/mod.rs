@@ -159,7 +159,6 @@ mod comprehensive_analyzer_chain_tests {
         
         // Create a complex chain: Filter -> ChunkMerger -> Enrich -> FileLogger -> Output
         let mut runner = FakeRunner::new()
-            .with_id("complex-chain".to_string())
             .event_count(5) // 10 events total
             .delay_ms(10)
             .add_analyzer(Box::new(FilterAnalyzer::new("ssl_only".to_string())))
@@ -204,7 +203,6 @@ mod comprehensive_analyzer_chain_tests {
     async fn test_analyzer_chain_error_resilience() {
         // Test that analyzer chain continues working even when individual analyzers encounter issues
         let mut runner = FakeRunner::new()
-            .with_id("error-resilience".to_string())
             .event_count(5)
             .delay_ms(10)
             .add_analyzer(Box::new(ErrorSimulatorAnalyzer::new(3))) // Error on 3rd event
@@ -243,7 +241,6 @@ mod comprehensive_analyzer_chain_tests {
             let results_clone = Arc::clone(&results);
             let handle = tokio::spawn(async move {
                 let mut runner = FakeRunner::new()
-                    .with_id(format!("concurrent-{}", i))
                     .event_count(3)
                     .delay_ms(5)
                     .add_analyzer(Box::new(SSEProcessor::new_with_timeout(5000)))
@@ -337,7 +334,6 @@ mod comprehensive_analyzer_chain_tests {
         let timestamps_clone = Arc::clone(&event_timestamps);
         
         let mut runner = FakeRunner::new()
-            .with_id("streaming-test".to_string())
             .event_count(5) // 10 events total
             .delay_ms(100) // 100ms delay to ensure streaming behavior is observable
             .add_analyzer(Box::new(TimestampRecorderAnalyzer::new(timestamps_clone)))
@@ -411,7 +407,6 @@ mod comprehensive_analyzer_chain_tests {
         let start_time = Instant::now();
         
         let mut runner = FakeRunner::new()
-            .with_id("backpressure-test".to_string())
             .event_count(3) // 6 events total
             .delay_ms(10) // Fast generation
             .add_analyzer(Box::new(SlowAnalyzer::new(50))) // Slow processing
@@ -489,7 +484,6 @@ mod comprehensive_analyzer_chain_tests {
         
         {
             let mut runner = FakeRunner::new()
-                .with_id("cleanup-test".to_string())
                 .event_count(2)
                 .delay_ms(10)
                 .add_analyzer(Box::new(ResourceTrackingAnalyzer::new("test1".to_string(), Arc::clone(&resources))))
