@@ -68,7 +68,8 @@ const char argp_program_doc[] =
 	"    ./sslsniff -c curl      # sniff curl command only\n"
 	"    ./sslsniff --no-openssl # don't show OpenSSL calls\n"
 	"    ./sslsniff --no-gnutls  # don't show GnuTLS calls\n"
-	"    ./sslsniff --no-nss     # don't show NSS calls\n";
+	"    ./sslsniff --no-nss     # don't show NSS calls\n"
+	"    ./sslsniff --handshake # show handshake events\n";
 
 struct env {
 	pid_t pid;
@@ -77,6 +78,7 @@ struct env {
 	bool openssl;
 	bool gnutls;
 	bool nss;
+	bool handshake;
 	char *extra_lib;
 } env = {
 	.uid = INVALID_UID,
@@ -84,6 +86,7 @@ struct env {
 	.openssl = true,
 	.gnutls = false,
 	.nss = false,
+	.handshake = false,
 	.comm = NULL,
 };
 
@@ -96,8 +99,8 @@ static const struct argp_option opts[] = {
 	{"no-openssl", 'o', NULL, 0, "Do not show OpenSSL calls."},
 	{"no-gnutls", 'g', NULL, 0, "Do not show GnuTLS calls."},
 	{"no-nss", 'n', NULL, 0, "Do not show NSS calls."},
+	{"handshake", 'h', NULL, 0, "Show handshake events."},
 	{"verbose", 'v', NULL, 0, "Verbose debug output"},
-	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help" },
 	{},
 };
 
@@ -123,11 +126,11 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state) {
 	case 'n':
 		env.nss = false;
 		break;
+	case 'h':
+		env.handshake = true;
+		break;
 	case 'v':
 		verbose = true;
-		break;
-	case 'h':
-		argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
 		break;
 	default:
 		return ARGP_ERR_UNKNOWN;
@@ -357,7 +360,9 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 static int handle_event(void *ctx, void *data, size_t data_sz) {
 	struct probe_SSL_data_t *e = data;
 	if (e->is_handshake) {
-		print_event(e, "ringbuf_SSL_do_handshake");
+		if (env.handshake) {
+			print_event(e, "ringbuf_SSL_do_handshake");
+		}
 	} else {
 		print_event(e, "ringbuf_SSL_rw");
 	}
