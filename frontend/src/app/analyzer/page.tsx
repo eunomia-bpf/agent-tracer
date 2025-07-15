@@ -59,23 +59,42 @@ export default function AnalyzerPage() {
     try {
       const lines = content.split('\n').filter(line => line.trim());
       const parsedEvents: Event[] = [];
+      const errors: string[] = [];
 
       lines.forEach((line, index) => {
         try {
           const event = JSON.parse(line.trim()) as Event;
           
-          // Validate event structure
-          if (event.id && event.timestamp && event.source && event.data) {
+          // Validate event structure - auto-generate id if missing
+          if (event.timestamp && event.source && event.data) {
+            if (!event.id) {
+              event.id = `${event.source}-${event.timestamp}-${index}`;
+            }
             parsedEvents.push(event);
+          } else {
+            // Track validation errors
+            const missing = [];
+            if (!event.timestamp) missing.push('timestamp');
+            if (!event.source) missing.push('source');
+            if (!event.data) missing.push('data');
+            errors.push(`Line ${index + 1}: Missing required fields: ${missing.join(', ')}`);
           }
         } catch (err) {
-          console.warn(`Failed to parse line ${index + 1}:`, line);
+          errors.push(`Line ${index + 1}: Invalid JSON - ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
       });
 
       if (parsedEvents.length === 0) {
-        setError('No valid events found in the log file');
+        const errorMsg = errors.length > 0 
+          ? `No valid events found. Errors:\n${errors.slice(0, 10).join('\n')}${errors.length > 10 ? '\n...and ' + (errors.length - 10) + ' more errors' : ''}`
+          : 'No valid events found in the log file';
+        setError(errorMsg);
         return;
+      }
+
+      // Show warnings for partial parsing
+      if (errors.length > 0) {
+        console.warn(`Parsed ${parsedEvents.length} events with ${errors.length} errors:`, errors);
       }
 
       // Sort events by timestamp

@@ -47,7 +47,7 @@ target.field=value
 | `path_prefix` | Path starts with | `request.path_prefix=/v1/` |
 | `path_contains` | Path contains | `request.path_contains=health` |
 | `host` | Host header | `request.host=api.example.com` |
-| `body` | Request body contains | `request.body={"user_id"` |
+| `body` or `body_contains` | Request body contains text | `request.body={"user_id"` |
 
 ### Response Fields
 
@@ -57,7 +57,7 @@ target.field=value
 | `status_text` | Status text contains | `response.status_text=Not Found` |
 | `content_type` | Content-Type header contains | `response.content_type=application/json` |
 | `server` | Server header contains | `response.server=nginx` |
-| `body` | Response body contains | `response.body=error` |
+| `body` or `body_contains` | Response body contains text | `response.body=error` |
 
 ### Logical Operators
 
@@ -103,6 +103,64 @@ For backward compatibility, the following legacy formats are supported:
 
 # Filter out JSON responses
 ./collector ssl --http-parser --http-filter "response.content_type=application/json"
+```
+
+### Body Filtering
+
+The HTTP filter supports filtering based on request and response body content using substring matching:
+
+#### Request Body Filtering
+
+```bash
+# Filter out requests with empty body
+./collector ssl --http-parser --http-filter "request.body="
+
+# Filter out requests containing specific JSON
+./collector ssl --http-parser --http-filter "request.body={\"action\":\"ping\"}"
+
+# Filter out requests with specific API keys
+./collector ssl --http-parser --http-filter "request.body=api_key"
+
+# Filter out login requests
+./collector ssl --http-parser --http-filter "request.body=password"
+
+# Filter out specific user operations
+./collector ssl --http-parser --http-filter "request.body=user_id\":\"12345"
+```
+
+#### Response Body Filtering
+
+```bash
+# Filter out responses with empty body
+./collector ssl --http-parser --http-filter "response.body="
+
+# Filter out successful API responses
+./collector ssl --http-parser --http-filter "response.body={\"status\":\"success\"}"
+
+# Filter out error responses containing specific messages
+./collector ssl --http-parser --http-filter "response.body=Internal Server Error"
+
+# Filter out debug responses
+./collector ssl --http-parser --http-filter "response.body=debug"
+
+# Filter out large JSON responses with specific structure
+./collector ssl --http-parser --http-filter "response.body=data\":[{"
+```
+
+#### Advanced Body Filtering
+
+```bash
+# Combine body and header filtering
+./collector ssl --http-parser --http-filter "request.body=api_key & request.host=internal.api.com"
+
+# Filter requests with empty body OR specific content
+./collector ssl --http-parser --http-filter "request.body= | request.body=keepalive"
+
+# Filter responses based on body content AND status
+./collector ssl --http-parser --http-filter "response.body=error & response.status_code=500"
+
+# Filter out authentication flows
+./collector ssl --http-parser --http-filter "request.body=username | request.body=token | response.body=access_token"
 ```
 
 ### Complex Expressions
@@ -218,6 +276,24 @@ The HTTP Filter only processes events with `source = "http_parser"`. Other event
 
 The HTTP Filter is designed to be thread-safe and can be used in concurrent analyzer chains.
 
+### Body Filtering Implementation
+
+Body filtering uses substring matching with the following characteristics:
+
+1. **Request Body**: Accessed via `data.body` field in HTTP parser events
+2. **Response Body**: Accessed via `data.body` field in HTTP parser events  
+3. **Matching**: Uses `contains()` method for substring matching
+4. **Empty Body**: Use `request.body=` or `response.body=` to match empty bodies
+5. **Case Sensitivity**: Body filtering is case-sensitive
+6. **Performance**: Body filtering processes the entire body content in memory
+
+#### Body Filtering Limitations
+
+- **Memory Usage**: Large bodies are held in memory during filtering
+- **Binary Data**: Only works with UTF-8 text content, binary data may cause issues
+- **Partial Content**: If body is truncated due to size limits, filtering may not work as expected
+- **Streaming**: Body must be complete before filtering can occur
+
 ## Troubleshooting
 
 ### Common Issues
@@ -225,6 +301,9 @@ The HTTP Filter is designed to be thread-safe and can be used in concurrent anal
 1. **Filter not working**: Ensure you're using `--http-parser` flag
 2. **No events shown**: Check if your filter expressions are too broad
 3. **Syntax errors**: Verify dot notation syntax (e.g., `request.path=value`)
+4. **Body filtering not working**: Check if HTTP parser is capturing body content
+5. **Empty body filter issues**: Use exact `request.body=` syntax for empty bodies
+6. **Binary content issues**: Body filtering only works with UTF-8 text content
 
 ### Validation
 
