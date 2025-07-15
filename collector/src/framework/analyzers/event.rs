@@ -59,22 +59,8 @@ impl SSEProcessorEvent {
     }
 
     pub fn to_event(&self, original_event: &Event) -> Event {
-        let data = serde_json::json!({
-            "connection_id": self.connection_id,
-            "message_id": self.message_id,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "duration_ns": self.duration_ns,
-            "original_source": self.original_source,
-            "function": self.function,
-            "tid": self.tid,
-            "json_content": self.json_content,
-            "text_content": self.text_content,
-            "total_size": self.total_size,
-            "event_count": self.event_count,
-            "has_message_start": self.has_message_start,
-            "sse_events": self.sse_events
-        });
+        // Serialize struct to JSON Value to ensure exact match with struct fields
+        let data = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}));
 
         // Use merged end_time if events were merged, otherwise use original timestamp
         let timestamp = if self.event_count > 1 {
@@ -158,28 +144,8 @@ impl HTTPEvent {
     }
 
     pub fn to_event(&self, original_event: &Event) -> Event {
-        let mut data = serde_json::json!({
-            "tid": self.tid,
-            "message_type": self.message_type,
-            "first_line": self.first_line,
-            "method": self.method,
-            "path": self.path,
-            "protocol": self.protocol,
-            "status_code": self.status_code,
-            "status_text": self.status_text,
-            "headers": self.headers,
-            "body": self.body,
-            "total_size": self.total_size,
-            "has_body": self.has_body,
-            "is_chunked": self.is_chunked,
-            "content_length": self.content_length,
-            "original_source": self.original_source,
-        });
-
-        // Only include raw_data if it's present
-        if let Some(raw_data) = &self.raw_data {
-            data["raw_data"] = serde_json::json!(raw_data);
-        }
+        // Serialize struct to JSON Value to ensure exact match with struct fields
+        let data = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}));
 
         Event::new_with_timestamp(
             original_event.timestamp,  // Use original event timestamp directly

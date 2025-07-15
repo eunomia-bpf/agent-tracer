@@ -2,6 +2,8 @@ export interface Event {
   id: string;
   timestamp: number;
   source: string;
+  pid: number;
+  comm: string;
   data: any;
 }
 
