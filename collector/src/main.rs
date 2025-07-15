@@ -179,7 +179,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
     // Add analyzers based on flags - when HTTP parser is enabled, always enable SSE merge first
     if enable_http_parser {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
-        ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPParser::new_with_debug()));
+        ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPParser::new()));
         println!("Starting SSL event stream with SSE processing and HTTP parsing enabled (press Ctrl+C to stop):");
     } else if enable_chunk_merger {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));

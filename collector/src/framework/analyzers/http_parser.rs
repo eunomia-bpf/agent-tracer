@@ -3,6 +3,7 @@ use crate::framework::runners::EventStream;
 use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
+use log::warn;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,9 +23,11 @@ pub struct HTTPParser {
 /// Accumulator for HTTP messages belonging to the same TID
 #[derive(Clone)]
 struct HTTPAccumulator {
+    #[allow(dead_code)]
     tid: u64,
     accumulated_data: String,
     message_type: Option<HTTPMessageType>,
+    #[allow(dead_code)]
     is_complete: bool,
     last_update: u64,
     /// Track if message has body content
@@ -65,12 +68,19 @@ pub struct HTTPMessage {
 }
 
 impl HTTPParser {
-    /// Create a new HTTPParser with default timeout (30 seconds)
+
+    /// Create a new HTTPParser with default settings (no debug output)
     pub fn new() -> Self {
-        Self::new_with_timeout(30_000)
+        HTTPParser {
+            name: "HTTPParser".to_string(),
+            http_buffers: Arc::new(Mutex::new(HashMap::new())),
+            timeout_ms: 30_000,
+            debug: false,
+        }
     }
 
     /// Create a new HTTPParser with debug output enabled
+    #[allow(dead_code)]
     pub fn new_with_debug() -> Self {
         HTTPParser {
             name: "HTTPParser".to_string(),
@@ -80,15 +90,6 @@ impl HTTPParser {
         }
     }
 
-    /// Create a new HTTPParser with custom timeout
-    pub fn new_with_timeout(timeout_ms: u64) -> Self {
-        HTTPParser {
-            name: "HTTPParser".to_string(),
-            http_buffers: Arc::new(Mutex::new(HashMap::new())),
-            timeout_ms,
-            debug: true,
-        }
-    }
 
     /// Debug print function - only prints if debug is enabled
     fn debug_print(&self, message: &str) {
@@ -125,6 +126,7 @@ impl HTTPParser {
         let lines: Vec<&str> = data.split("\r\n").collect();
         
         if lines.is_empty() {
+            warn!("HTTPParser: Cannot parse HTTP message - no lines found in data");
             return None;
         }
 
@@ -370,6 +372,8 @@ impl HTTPParser {
         if ssl_data.get("is_handshake").and_then(|v| v.as_bool()).unwrap_or(false) {
             if debug {
                 eprintln!("[DEBUG] HTTPParser: Skipping handshake event");
+            } else {
+                warn!("HTTPParser: Dropping SSL handshake event (not HTTP data)");
             }
             return None;
         }
@@ -381,6 +385,11 @@ impl HTTPParser {
 
         // Check if this is HTTP data
         if !Self::is_http_data(data_str) {
+            if debug {
+                eprintln!("[DEBUG] HTTPParser: Passing through non-HTTP SSL data");
+            } else {
+                warn!("HTTPParser: Passing through non-HTTP SSL data (not HTTP protocol)");
+            }
             return Some(event);
         }
 
@@ -470,6 +479,16 @@ impl HTTPParser {
                     } else {
                         eprintln!("[DEBUG] HTTPParser: HTTP message incomplete for TID {}, continuing accumulation", tid);
                     }
+                } else {
+                    // In production, only warn if we're accumulating for a long time
+                    let time_since_start = timestamp - accumulator.last_update;
+                    if time_since_start > (timeout_ms / 2) * 1_000_000 { // Warn at half timeout
+                        if accumulator.is_sse_response && accumulator.sse_content.is_none() {
+                            warn!("HTTPParser: SSE response for TID {} waiting for SSE content ({}ms elapsed)", tid, time_since_start / 1_000_000);
+                        } else {
+                            warn!("HTTPParser: HTTP message incomplete for TID {} after {}ms, still accumulating", tid, time_since_start / 1_000_000);
+                        }
+                    }
                 }
                 None
             }
@@ -535,6 +554,11 @@ impl HTTPParser {
         }
         
         // Don't pass through SSE processor events - we've consumed them
+        if debug {
+            eprintln!("[DEBUG] HTTPParser: Consuming SSE processor event for TID {}", tid);
+        } else {
+            warn!("HTTPParser: Dropping SSE processor event for TID {} (not matched to HTTP response)", tid);
+        }
         None
     }
 }

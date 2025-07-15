@@ -14,6 +14,7 @@ pub struct SSEProcessor {
     /// Store accumulated SSE content by connection + message ID
     sse_buffers: Arc<Mutex<HashMap<String, SSEAccumulator>>>,
     /// Timeout for incomplete SSE streams (in milliseconds)
+    #[allow(dead_code)]
     timeout_ms: u64,
     /// Enable debug output (matches Python quiet flag)
     debug: bool,
@@ -43,6 +44,7 @@ pub struct SSEEvent {
 
 impl SSEProcessor {
     /// Create a new SSEProcessor with default timeout (30 seconds)
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::new_with_timeout(30_000)
     }
@@ -56,6 +58,7 @@ impl SSEProcessor {
             debug: false,
         }
     }
+
 
     /// Debug print function - only prints if debug is enabled (matches Python debug_print)
     fn debug_print(&self, message: &str) {
@@ -359,28 +362,6 @@ impl SSEProcessor {
         }
     }
 
-    /// Warn about unexpected conditions (debug output only)
-    fn warn_if_unexpected(&self, accumulator: &SSEAccumulator, connection_id: &str) {
-        // Warn if we're completing without message_start
-        if !accumulator.has_message_start && accumulator.events.len() > 0 {
-            self.debug_print(&format!(" SSEProcessor: Completing SSE stream {} without message_start event - may be incomplete!", connection_id));
-        }
-        
-        // Warn if we have very little content
-        if accumulator.accumulated_text.len() == 0 && accumulator.accumulated_json.len() == 0 && accumulator.events.len() > 3 {
-            self.debug_print(&format!(" SSEProcessor: SSE stream {} has {} events but no accumulated content - possible parsing issue!", connection_id, accumulator.events.len()));
-        }
-        
-        // Warn if JSON looks incomplete
-        if !accumulator.accumulated_json.is_empty() && !accumulator.accumulated_json.starts_with('{') {
-            self.debug_print(&format!(" SSEProcessor: SSE stream {} has JSON content that doesn't start with '{{' - may be incomplete: {}", connection_id, &accumulator.accumulated_json[..std::cmp::min(50, accumulator.accumulated_json.len())]));
-        }
-        
-        // Warn if buffer size limit was hit
-        if accumulator.accumulated_text.len() > 10240 || accumulator.accumulated_json.len() > 10240 {
-            self.debug_print(&format!(" SSEProcessor: SSE stream {} hit buffer size limit - may be incomplete!", connection_id));
-        }
-    }
 
     /// Create merged event from accumulated SSE content
     fn create_merged_event(
