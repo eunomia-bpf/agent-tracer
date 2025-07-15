@@ -148,9 +148,15 @@ mod sse_processor_tests {
         // Test processing thinking deltas like in ssl_log_analyzer.py
         let mut processor = SSEProcessor::new();
         
+        // Create SSE data with proper double newlines
+        let sse_data = format!("event: content_block_delta\ndata: {}\n\nevent: message_stop\ndata: {}\n\n",
+            "{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me think about this...\"}}",
+            "{\"type\":\"message_stop\"}"
+        );
+        
         let test_event = Event::new("ssl".to_string(), json!({
             "comm": "claude",
-            "data": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me think about this...\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            "data": sse_data,
             "function": "READ/RECV",
             "pid": 1234,
             "tid": 1234,

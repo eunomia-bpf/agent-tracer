@@ -29,11 +29,14 @@ struct SSEAccumulator {
     has_message_start: bool,
 }
 
-/// Parsed SSE event
+/// Parsed SSE event - matches ssl_log_analyzer.py structure
 #[derive(Clone, Debug)]
 pub struct SSEEvent {
-    pub event_type: String,
-    pub data: Value,
+    pub event: Option<String>,
+    pub data: Option<String>,
+    pub id: Option<String>,
+    pub parsed_data: Option<Value>,
+    pub raw_data: Option<String>,
 }
 
 impl SSEProcessor {
@@ -63,55 +66,108 @@ impl SSEProcessor {
         let has_chunked_sse = data.contains("Transfer-Encoding: chunked") && 
                               (data.contains("event:") || data.contains("data:"));
         
-        has_sse_patterns || has_sse_content_type || has_chunked_sse
+        // Check for standalone data: field (SSE can have just data: without event:)
+        let has_sse_data_only = data.contains("data:") && (data.contains("\r\n\r\n") || data.contains("\n\n"));
+        
+        has_sse_patterns || has_sse_content_type || has_chunked_sse || has_sse_data_only
     }
 
-    /// Parse SSE events from raw SSL data
-    pub fn parse_sse_events(data: &str) -> Vec<SSEEvent> {
+    /// Parse SSE events from a single chunk - matches ssl_log_analyzer.py parse_sse_events_from_chunk
+    pub fn parse_sse_events_from_chunk(chunk_content: &str) -> Vec<SSEEvent> {
         let mut events = Vec::new();
         
-        // Clean up chunked encoding first
-        let clean_data = Self::clean_chunked_content(data);
+        eprintln!("[DEBUG] Parsing SSE chunk content (length: {}): {:?}", 
+                 chunk_content.len(), chunk_content);
+        std::io::stdout().flush().unwrap();
         
-        // Split by double newlines to separate events
-        let parts: Vec<&str> = clean_data.split("\n\n").collect();
+        // Split by double newlines to separate events - matches Python: re.split(r'\n\s*\n', chunk_content)
+        let event_blocks: Vec<&str> = chunk_content.split("\n\n").collect();
         
-        for part in parts {
-            if part.trim().is_empty() {
+        eprintln!("[DEBUG] Split into {} event blocks", event_blocks.len());
+        std::io::stdout().flush().unwrap();
+        
+        for block in event_blocks {
+            if block.trim().is_empty() {
                 continue;
             }
             
-            let mut event_type = String::new();
-            let mut data_content = String::new();
+            let mut event = SSEEvent {
+                event: None,
+                data: None,
+                id: None,
+                parsed_data: None,
+                raw_data: None,
+            };
+            let mut data_lines = Vec::new();
             
-            // Parse event: and data: lines
-            for line in part.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("event:") {
-                    event_type = trimmed[6..].trim().to_string();
-                } else if trimmed.starts_with("data:") {
-                    data_content = trimmed[5..].trim().to_string();
+            for line in block.split('\n') {
+                let line = line.trim();
+                if line.starts_with("event:") {
+                    event.event = Some(line[6..].trim().to_string());
+                } else if line.starts_with("data:") {
+                    data_lines.push(line[5..].trim());
+                } else if line.starts_with("id:") {
+                    event.id = Some(line[3..].trim().to_string());
                 }
             }
             
-            // Parse JSON data if present
-            if !event_type.is_empty() && !data_content.is_empty() {
-                match serde_json::from_str::<Value>(&data_content) {
-                    Ok(json_data) => {
-                        events.push(SSEEvent {
-                            event_type,
-                            data: json_data,
-                        });
+            if !data_lines.is_empty() {
+                let combined_data = data_lines.join("\n");
+                event.data = Some(combined_data.clone());
+                
+                // Try to parse as JSON
+                match serde_json::from_str::<Value>(&combined_data) {
+                    Ok(parsed_json) => {
+                        event.parsed_data = Some(parsed_json);
                     }
-                    Err(e) => {
-                        eprintln!(" SSEProcessor: Failed to parse SSE JSON data: {} - Error: {}", data_content, e);
-                        std::io::stdout().flush().unwrap();
+                    Err(_) => {
+                        event.raw_data = Some(combined_data);
                     }
                 }
+            }
+            
+            if event.event.is_some() || event.data.is_some() {
+                // Debug output for each parsed event
+                if let Some(ref event_type) = event.event {
+                    eprintln!("[DEBUG] Parsed SSE event: type='{}', has_data={}", 
+                             event_type, event.data.is_some());
+                    if event_type == "content_block_delta" && event.parsed_data.is_some() {
+                        if let Some(ref parsed) = event.parsed_data {
+                            if let Some(delta) = parsed.get("delta") {
+                                if let Some(text) = delta.get("text") {
+                                    eprintln!("[DEBUG]   - text_delta: {:?}", text);
+                                }
+                                if let Some(thinking) = delta.get("thinking") {
+                                    eprintln!("[DEBUG]   - thinking_delta: {:?}", thinking);
+                                }
+                                if let Some(partial_json) = delta.get("partial_json") {
+                                    eprintln!("[DEBUG]   - partial_json: {:?}", partial_json);
+                                }
+                            }
+                        }
+                    }
+                    std::io::stdout().flush().unwrap();
+                }
+                events.push(event);
             }
         }
         
         events
+    }
+
+    /// Parse SSE events from raw SSL data
+    pub fn parse_sse_events(data: &str) -> Vec<SSEEvent> {
+        eprintln!("[DEBUG] Raw SSL data before cleaning: {:?}", data);
+        std::io::stdout().flush().unwrap();
+        
+        // Clean up chunked encoding first
+        let clean_data = Self::clean_chunked_content(data);
+        
+        eprintln!("[DEBUG] Data after cleaning: {:?}", clean_data);
+        std::io::stdout().flush().unwrap();
+        
+        // Use the chunk parser
+        Self::parse_sse_events_from_chunk(&clean_data)
     }
 
     /// Clean HTTP chunked encoding artifacts from content
@@ -163,14 +219,18 @@ impl SSEProcessor {
         format!("{}:{}:{}", pid, tid, window)
     }
 
-    /// Extract message ID from SSE events
+    /// Extract message ID from SSE events - matches ssl_log_analyzer.py logic
     fn extract_message_id(events: &[SSEEvent]) -> Option<String> {
         for event in events {
-            if event.event_type == "message_start" {
-                if let Some(message) = event.data.get("message") {
-                    if let Some(id) = message.get("id") {
-                        if let Some(id_str) = id.as_str() {
-                            return Some(id_str.to_string());
+            if let Some(event_type) = &event.event {
+                if event_type == "message_start" {
+                    if let Some(parsed_data) = &event.parsed_data {
+                        if let Some(message) = parsed_data.get("message") {
+                            if let Some(id) = message.get("id") {
+                                if let Some(id_str) = id.as_str() {
+                                    return Some(id_str.to_string());
+                                }
+                            }
                         }
                     }
                 }
@@ -183,17 +243,21 @@ impl SSEProcessor {
     fn is_sse_complete(accumulator: &SSEAccumulator) -> bool {
         // Check for completion events
         for event in &accumulator.events {
-            match event.event_type.as_str() {
-                "message_stop" | "content_block_stop" | "error" => return true,
-                "message_delta" => {
-                    // Check if this indicates completion
-                    if let Some(delta) = event.data.get("delta") {
-                        if delta.get("stop_reason").is_some() {
-                            return true;
+            if let Some(event_type) = &event.event {
+                match event_type.as_str() {
+                    "message_stop" | "content_block_stop" | "error" => return true,
+                    "message_delta" => {
+                        // Check if this indicates completion
+                        if let Some(parsed_data) = &event.parsed_data {
+                            if let Some(delta) = parsed_data.get("delta") {
+                                if delta.get("stop_reason").is_some() {
+                                    return true;
+                                }
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         
@@ -202,38 +266,65 @@ impl SSEProcessor {
         accumulator.accumulated_json.len() > 10240
     }
 
-    /// Accumulate content from content_block_delta events
+    /// Accumulate content from content_block_delta events - matches ssl_log_analyzer.py logic
     fn accumulate_content(accumulator: &mut SSEAccumulator, events: &[SSEEvent]) {
+        let mut chunk_text_parts = Vec::new();
+        
         for event in events {
             accumulator.events.push(event.clone());
             
-            match event.event_type.as_str() {
-                "message_start" => {
-                    accumulator.has_message_start = true;
-                    // Extract message ID
-                    if accumulator.message_id.is_none() {
-                        accumulator.message_id = Self::extract_message_id(&[event.clone()]);
+            // Check event type (matches ssl_log_analyzer.py)
+            if let Some(event_type) = &event.event {
+                match event_type.as_str() {
+                    "message_start" => {
+                        accumulator.has_message_start = true;
+                        // Extract message ID
+                        if accumulator.message_id.is_none() {
+                            accumulator.message_id = Self::extract_message_id(&[event.clone()]);
+                        }
+                        eprintln!("[DEBUG] Found message_start event with ID: {:?}", accumulator.message_id);
+                        std::io::stdout().flush().unwrap();
                     }
-                }
-                "content_block_delta" => {
-                    if let Some(delta) = event.data.get("delta") {
-                        // Handle text delta
-                        if let Some(text_delta) = delta.get("text") {
-                            if let Some(text) = text_delta.as_str() {
-                                accumulator.accumulated_text.push_str(text);
+                    "content_block_delta" => {
+                        // Handle deltas - matches ssl_log_analyzer.py logic
+                        if let Some(parsed_data) = &event.parsed_data {
+                            if let Some(delta) = parsed_data.get("delta") {
+                                let mut text = String::new();
+                                
+                                // Handle text delta
+                                if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
+                                    if let Some(text_value) = delta.get("text").and_then(|v| v.as_str()) {
+                                        text = text_value.to_string();
+                                    }
+                                }
+                                // Handle thinking delta
+                                else if delta.get("type").and_then(|v| v.as_str()) == Some("thinking_delta") {
+                                    if let Some(thinking_value) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                        text = thinking_value.to_string();
+                                    }
+                                }
+                                
+                                if !text.is_empty() {
+                                    chunk_text_parts.push(text.clone());
+                                    accumulator.accumulated_text.push_str(&text);
+                                }
+                                
+                                // Handle JSON delta (partial_json)
+                                if let Some(partial_json) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                    accumulator.accumulated_json.push_str(partial_json);
+                                }
                             }
                         }
-                        
-                        // Handle JSON delta (partial_json)
-                        if let Some(partial_json) = delta.get("partial_json") {
-                            if let Some(json_text) = partial_json.as_str() {
-                                accumulator.accumulated_json.push_str(json_text);
-                            }
-                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
+        }
+        
+        // Debug output like ssl_log_analyzer.py
+        if !chunk_text_parts.is_empty() {
+            eprintln!("[DEBUG] Extracted text from chunk: {:?}", chunk_text_parts);
+            std::io::stdout().flush().unwrap();
         }
     }
 
@@ -281,7 +372,7 @@ impl SSEProcessor {
         };
 
         Event::new(
-            "chunk_merger".to_string(),
+            "sse_processor".to_string(),
             json!({
                 "connection_id": connection_id,
                 "message_id": accumulator.message_id,
@@ -297,8 +388,11 @@ impl SSEProcessor {
                 "event_count": accumulator.events.len(),
                 "has_message_start": accumulator.has_message_start,
                 "sse_events": accumulator.events.iter().map(|e| json!({
-                    "type": e.event_type,
-                    "data": e.data
+                    "event": e.event,
+                    "data": e.data,
+                    "id": e.id,
+                    "parsed_data": e.parsed_data,
+                    "raw_data": e.raw_data
                 })).collect::<Vec<_>>()
             })
         )
@@ -310,7 +404,7 @@ impl Analyzer for SSEProcessor {
     async fn process(&mut self, stream: EventStream) -> Result<EventStream, AnalyzerError> {
         let sse_buffers = Arc::clone(&self.sse_buffers);
 
-        eprintln!("SSEProcessor: Starting SSE event processing");
+        eprintln!("[DEBUG] SSEProcessor: Starting SSE event processing");
         std::io::stdout().flush().unwrap();
         
         let processed_stream = stream.filter_map(move |event| {
@@ -337,6 +431,10 @@ impl Analyzer for SSEProcessor {
                 if sse_events.is_empty() {
                     return Some(event); // Pass through if no SSE events found
                 }
+
+                eprintln!("[DEBUG] Processing SSE chunk at timestamp {} - found {} events", 
+                         event.timestamp, sse_events.len());
+                std::io::stdout().flush().unwrap();
 
                 let connection_id = Self::generate_connection_id(&event, &sse_events);
                 
@@ -377,7 +475,17 @@ impl Analyzer for SSEProcessor {
                 if Self::is_sse_complete(accumulator) {
                     // Warn about unexpected conditions before completing
                     Self::warn_if_unexpected(accumulator, &final_connection_id);
-                    eprintln!("SSEProcessor: Completed SSE stream for connection {} - {} text chars, {} json chars, {} events", 
+                    
+                    // Add detailed debug output like ssl_log_analyzer.py _finalize_sse_response
+                    eprintln!("[DEBUG] Finalizing SSE response:");
+                    eprintln!("  - Text parts: {:?}", accumulator.accumulated_text);
+                    eprintln!("  - JSON parts: {:?}", accumulator.accumulated_json);
+                    eprintln!("  - Merged text: '{}'", accumulator.accumulated_text);
+                    eprintln!("  - Merged JSON: '{}'", accumulator.accumulated_json);
+                    eprintln!("  - Event count: {}", accumulator.events.len());
+                    std::io::stdout().flush().unwrap();
+                    
+                    eprintln!("[DEBUG] SSEProcessor: Completed SSE stream for connection {} - {} text chars, {} json chars, {} events", 
                             final_connection_id, 
                             accumulator.accumulated_text.len(),
                             accumulator.accumulated_json.len(),
