@@ -251,7 +251,7 @@ impl SSEProcessor {
     }
 
     /// Accumulate content from content_block_delta events - matches ssl_log_analyzer.py logic
-    fn accumulate_content(accumulator: &mut SSEAccumulator, events: &[SSEEvent]) {
+    fn accumulate_content(accumulator: &mut SSEAccumulator, events: &[SSEEvent], debug: bool) {
         let mut chunk_text_parts = Vec::new();
         
         for event in events {
@@ -259,12 +259,19 @@ impl SSEProcessor {
             
             // Check event type (matches ssl_log_analyzer.py)
             if let Some(event_type) = &event.event {
+                if debug {
+                    eprintln!("[DEBUG]   Processing event type: {}", event_type);
+                }
+                
                 match event_type.as_str() {
                     "message_start" => {
                         accumulator.has_message_start = true;
                         // Extract message ID
                         if accumulator.message_id.is_none() {
                             accumulator.message_id = Self::extract_message_id(&[event.clone()]);
+                        }
+                        if debug {
+                            eprintln!("[DEBUG]     Found message_start, has_message_start=true");
                         }
                     }
                     "content_block_delta" => {
@@ -277,12 +284,18 @@ impl SSEProcessor {
                                 if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
                                     if let Some(text_value) = delta.get("text").and_then(|v| v.as_str()) {
                                         text = text_value.to_string();
+                                        if debug {
+                                            eprintln!("[DEBUG]     Extracted text_delta: '{}'", text);
+                                        }
                                     }
                                 }
                                 // Handle thinking delta
                                 else if delta.get("type").and_then(|v| v.as_str()) == Some("thinking_delta") {
                                     if let Some(thinking_value) = delta.get("thinking").and_then(|v| v.as_str()) {
                                         text = thinking_value.to_string();
+                                        if debug {
+                                            eprintln!("[DEBUG]     Extracted thinking_delta: '{}'", text);
+                                        }
                                     }
                                 }
                                 
@@ -294,13 +307,26 @@ impl SSEProcessor {
                                 // Handle JSON delta (partial_json)
                                 if let Some(partial_json) = delta.get("partial_json").and_then(|v| v.as_str()) {
                                     accumulator.accumulated_json.push_str(partial_json);
+                                    if debug {
+                                        eprintln!("[DEBUG]     Extracted partial_json: '{}'", partial_json);
+                                    }
                                 }
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if debug {
+                            eprintln!("[DEBUG]     Skipping event type: {}", event_type);
+                        }
+                    }
                 }
+            } else if debug {
+                eprintln!("[DEBUG]   Event with no type field");
             }
+        }
+        
+        if debug && !chunk_text_parts.is_empty() {
+            eprintln!("[DEBUG]   Accumulated {} text parts: {:?}", chunk_text_parts.len(), chunk_text_parts);
         }
     }
 
@@ -407,6 +433,11 @@ impl Analyzer for SSEProcessor {
                 if debug {
                     eprintln!("[DEBUG] Processing SSE chunk at timestamp {} - found {} events", 
                              event.timestamp, sse_events.len());
+                    // Log event types for each SSE event
+                    for (i, sse_event) in sse_events.iter().enumerate() {
+                        let event_type = sse_event.event.as_deref().unwrap_or("none");
+                        eprintln!("[DEBUG]   Event {}: type={}", i + 1, event_type);
+                    }
                     std::io::stdout().flush().unwrap();
                 }
 
@@ -443,7 +474,7 @@ impl Analyzer for SSEProcessor {
                 accumulator.last_update = event.timestamp;
                 
                 // Accumulate content from SSE events
-                Self::accumulate_content(accumulator, &sse_events);
+                Self::accumulate_content(accumulator, &sse_events, debug);
                 
                 // Check if stream is complete
                 if Self::is_sse_complete(accumulator) {
