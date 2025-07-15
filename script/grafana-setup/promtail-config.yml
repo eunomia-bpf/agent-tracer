@@ -1,0 +1,110 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Agent Tracer JSON logs
+  - job_name: agent-tracer
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: agent-tracer
+          __path__: /logs/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            event_type: event_type
+            pid: pid
+            comm: comm
+            message: message
+            payload: payload
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          level:
+          event_type:
+          pid:
+          comm:
+
+  # SSL/TLS logs specifically
+  - job_name: ssl-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ssl-logs
+          __path__: /logs/ssl_*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            event_type: event_type
+            pid: pid
+            comm: comm
+            data_type: data_type
+            data_len: data_len
+            payload: payload
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          event_type:
+          pid:
+          comm:
+          data_type:
+
+  # Process monitoring logs
+  - job_name: process-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: process-logs
+          __path__: /logs/process_*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            event_type: event_type
+            pid: pid
+            ppid: ppid
+            comm: comm
+            filename: filename
+            payload: payload
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          event_type:
+          pid:
+          comm:
+
+  # Generic JSON logs
+  - job_name: json-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: json-logs
+          __path__: /logs/*.json
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - "2006-01-02T15:04:05.999999999Z07:00"
+            - "2006-01-02T15:04:05Z07:00"

@@ -197,9 +197,10 @@ impl SSEProcessor {
         }
         
         // If no message ID, use a persistent connection identifier
-        // Use a larger time window (60 seconds) to keep long SSE streams together
+        // Use a much larger time window (10 minutes) to keep long SSE streams together
+        // This ensures that streaming responses don't get fragmented
         let timestamp = event.timestamp;
-        let window = timestamp / 60_000_000_000; // Convert to 60-second windows
+        let window = timestamp / 600_000_000_000; // Convert to 10-minute windows
         format!("{}:{}:{}", pid, tid, window)
     }
 
@@ -227,44 +228,28 @@ impl SSEProcessor {
     fn is_sse_complete(accumulator: &SSEAccumulator) -> bool {
         // According to Claude docs, the proper completion sequence is:
         // 1. message_start
-        // 2. content_block_start, content_block_delta(s), content_block_stop
+        // 2. content_block_start, content_block_delta(s), content_block_stop  
         // 3. message_delta (with stop_reason)
         // 4. message_stop (final event)
         
-        let mut has_message_stop = false;
-        let mut has_content_block_stop = false;
-        let mut has_stop_reason = false;
-        
+        // The ONLY reliable completion indicator is message_stop
+        // All other events can appear multiple times or be missing
         for event in &accumulator.events {
             if let Some(event_type) = &event.event {
                 match event_type.as_str() {
-                    "message_stop" => has_message_stop = true,
-                    "content_block_stop" => has_content_block_stop = true,
+                    "message_stop" => return true,
                     "error" => return true, // Immediate completion on error
-                    "message_delta" => {
-                        // Check if this indicates completion with stop_reason
-                        if let Some(parsed_data) = &event.parsed_data {
-                            if let Some(delta) = parsed_data.get("delta") {
-                                if delta.get("stop_reason").is_some() {
-                                    has_stop_reason = true;
-                                }
-                            }
-                        }
-                    }
                     _ => {}
                 }
             }
         }
         
-        // Stream is complete when we have message_stop (the final event)
-        // OR when we have both content_block_stop and message_delta with stop_reason
-        let is_complete = has_message_stop || (has_content_block_stop && has_stop_reason);
+        // Fallback: check for very large buffer size as safety measure
+        // Use much larger buffer limit to avoid cutting off long responses  
+        let size_timeout = accumulator.accumulated_text.len() > 50000 || 
+                          accumulator.accumulated_json.len() > 50000;
         
-        // Also check buffer size timeout as fallback
-        let size_timeout = accumulator.accumulated_text.len() > 10240 || 
-                          accumulator.accumulated_json.len() > 10240;
-        
-        is_complete || size_timeout
+        size_timeout
     }
 
     /// Check if SSE stream contains meaningful content worth creating an event for
@@ -490,8 +475,10 @@ impl Analyzer for SSEProcessor {
                         match event_type.as_str() {
                             // These events can contain or lead to content
                             "message_start" | "content_block_start" | "content_block_delta" => true,
+                            // These are completion/control events but still important
+                            "message_stop" | "content_block_stop" => true,
                             // These are pure metadata
-                            "message_stop" | "message_delta" | "ping" | "content_block_stop" => false,
+                            "message_delta" | "ping" => false,
                             // Unknown events might have content
                             _ => true,
                         }
@@ -501,8 +488,17 @@ impl Analyzer for SSEProcessor {
                     }
                 });
 
-                // If this chunk has no content potential and no existing accumulator, skip it
-                if !has_content_potential {
+                // Be more conservative about skipping chunks - only skip pure ping/metadata
+                // Always process message_stop events even if they seem like "metadata"
+                let should_skip_chunk = !has_content_potential && sse_events.iter().all(|e| {
+                    if let Some(event_type) = &e.event {
+                        matches!(event_type.as_str(), "ping" | "message_delta")
+                    } else {
+                        false
+                    }
+                });
+
+                if should_skip_chunk {
                     let connection_id = Self::generate_connection_id(&event, &sse_events);
                     let buffers_lock = buffers.lock().unwrap();
                     let has_existing_accumulator = buffers_lock.contains_key(&connection_id);
@@ -533,13 +529,28 @@ impl Analyzer for SSEProcessor {
                 // Store/accumulate SSE events for this connection
                 let mut buffers_lock = buffers.lock().unwrap();
                 
-                // Check if we already have an accumulator with the same message ID
+                // Improve message ID matching - use the first available message ID as connection ID
                 let mut final_connection_id = connection_id.clone();
+                
+                // If we have a message_start event, use its message ID as the definitive connection ID
                 if let Some(message_id) = Self::extract_message_id(&sse_events) {
-                    // Look for existing accumulator with this message ID
+                    let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let tid = event.data.get("tid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    final_connection_id = format!("{}:{}:{}", pid, tid, message_id);
+                } else {
+                    // For events without message_start, try to find an existing accumulator
+                    // with the same pid/tid that doesn't have a message_stop yet
+                    let pid = event.data.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let tid = event.data.get("tid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let conn_prefix = format!("{}:{}:", pid, tid);
+                    
                     for (existing_id, accumulator) in buffers_lock.iter() {
-                        if let Some(existing_msg_id) = &accumulator.message_id {
-                            if existing_msg_id == &message_id {
+                        if existing_id.starts_with(&conn_prefix) && !accumulator.is_complete {
+                            // Check if this accumulator doesn't have message_stop yet
+                            let has_message_stop = accumulator.events.iter().any(|e| {
+                                e.event.as_deref() == Some("message_stop")
+                            });
+                            if !has_message_stop {
                                 final_connection_id = existing_id.clone();
                                 break;
                             }
