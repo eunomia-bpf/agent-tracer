@@ -223,19 +223,30 @@ impl SSEProcessor {
         None
     }
 
-    /// Check if SSE stream is complete
+    /// Check if SSE stream is complete - follows Claude API streaming docs
     fn is_sse_complete(accumulator: &SSEAccumulator) -> bool {
-        // Check for completion events
+        // According to Claude docs, the proper completion sequence is:
+        // 1. message_start
+        // 2. content_block_start, content_block_delta(s), content_block_stop
+        // 3. message_delta (with stop_reason)
+        // 4. message_stop (final event)
+        
+        let mut has_message_stop = false;
+        let mut has_content_block_stop = false;
+        let mut has_stop_reason = false;
+        
         for event in &accumulator.events {
             if let Some(event_type) = &event.event {
                 match event_type.as_str() {
-                    "message_stop" | "content_block_stop" | "error" => return true,
+                    "message_stop" => has_message_stop = true,
+                    "content_block_stop" => has_content_block_stop = true,
+                    "error" => return true, // Immediate completion on error
                     "message_delta" => {
-                        // Check if this indicates completion
+                        // Check if this indicates completion with stop_reason
                         if let Some(parsed_data) = &event.parsed_data {
                             if let Some(delta) = parsed_data.get("delta") {
                                 if delta.get("stop_reason").is_some() {
-                                    return true;
+                                    has_stop_reason = true;
                                 }
                             }
                         }
@@ -245,9 +256,52 @@ impl SSEProcessor {
             }
         }
         
-        // Check buffer size timeout
-        accumulator.accumulated_text.len() > 10240 || // 10KB limit
-        accumulator.accumulated_json.len() > 10240
+        // Stream is complete when we have message_stop (the final event)
+        // OR when we have both content_block_stop and message_delta with stop_reason
+        let is_complete = has_message_stop || (has_content_block_stop && has_stop_reason);
+        
+        // Also check buffer size timeout as fallback
+        let size_timeout = accumulator.accumulated_text.len() > 10240 || 
+                          accumulator.accumulated_json.len() > 10240;
+        
+        is_complete || size_timeout
+    }
+
+    /// Check if SSE stream contains meaningful content worth creating an event for
+    fn has_meaningful_content(accumulator: &SSEAccumulator) -> bool {
+        // Content is meaningful if:
+        // 1. We have accumulated text content
+        // 2. We have accumulated JSON content 
+        // 3. We have content_block_delta events (indicates content stream)
+        // 4. We have a substantial number of events (suggests real content stream)
+        
+        if !accumulator.accumulated_text.is_empty() || !accumulator.accumulated_json.is_empty() {
+            return true;
+        }
+        
+        // Check if we have content_block_delta events (indicates content stream)
+        let mut has_content_deltas = false;
+        let mut has_message_start = false;
+        let mut metadata_only_count = 0;
+        
+        for event in &accumulator.events {
+            if let Some(event_type) = &event.event {
+                match event_type.as_str() {
+                    "content_block_delta" => has_content_deltas = true,
+                    "message_start" => has_message_start = true,
+                    // These are metadata-only events
+                    "message_stop" | "message_delta" | "ping" | "content_block_stop" | "content_block_start" => {
+                        metadata_only_count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // Stream is meaningful if:
+        // - It has content_block_delta events, OR
+        // - It has message_start and is not just a few metadata events
+        has_content_deltas || (has_message_start && accumulator.events.len() > 3 && metadata_only_count < accumulator.events.len())
     }
 
     /// Accumulate content from content_block_delta events - matches ssl_log_analyzer.py logic
@@ -430,6 +484,39 @@ impl Analyzer for SSEProcessor {
                     return Some(event); // Pass through if no SSE events found
                 }
 
+                // Check if this chunk contains only metadata events (no content potential)
+                let has_content_potential = sse_events.iter().any(|sse_event| {
+                    if let Some(event_type) = &sse_event.event {
+                        match event_type.as_str() {
+                            // These events can contain or lead to content
+                            "message_start" | "content_block_start" | "content_block_delta" => true,
+                            // These are pure metadata
+                            "message_stop" | "message_delta" | "ping" | "content_block_stop" => false,
+                            // Unknown events might have content
+                            _ => true,
+                        }
+                    } else {
+                        // Events without type might have content
+                        true
+                    }
+                });
+
+                // If this chunk has no content potential and no existing accumulator, skip it
+                if !has_content_potential {
+                    let connection_id = Self::generate_connection_id(&event, &sse_events);
+                    let buffers_lock = buffers.lock().unwrap();
+                    let has_existing_accumulator = buffers_lock.contains_key(&connection_id);
+                    drop(buffers_lock);
+                    
+                    if !has_existing_accumulator {
+                        if debug {
+                            eprintln!("[DEBUG] Skipping metadata-only chunk with no existing accumulator: {:?}", 
+                                     sse_events.iter().map(|e| e.event.as_deref().unwrap_or("none")).collect::<Vec<_>>());
+                        }
+                        return None;
+                    }
+                }
+
                 if debug {
                     eprintln!("[DEBUG] Processing SSE chunk at timestamp {} - found {} events", 
                              event.timestamp, sse_events.len());
@@ -478,8 +565,6 @@ impl Analyzer for SSEProcessor {
                 
                 // Check if stream is complete
                 if Self::is_sse_complete(accumulator) {
-                    // Note: warnings suppressed in non-debug mode
-                    
                     // Add detailed debug output like ssl_log_analyzer.py _finalize_sse_response
                     if debug {
                         eprintln!("[DEBUG] Finalizing SSE response:");
@@ -496,18 +581,26 @@ impl Analyzer for SSEProcessor {
                         std::io::stdout().flush().unwrap();
                     }
                     
-                    // Create merged event
-                    let merged_event = Self::create_merged_event(
-                        final_connection_id.clone(),
-                        accumulator,
-                        &event,
-                    );
+                    // Only create merged event if stream has meaningful content
+                    let result_event = if Self::has_meaningful_content(accumulator) {
+                        let merged_event = Self::create_merged_event(
+                            final_connection_id.clone(),
+                            accumulator,
+                            &event,
+                        );
+                        Some(merged_event)
+                    } else {
+                        if debug {
+                            eprintln!("[DEBUG] SSE stream {} contains no meaningful content - skipping event creation", final_connection_id);
+                        }
+                        None
+                    };
                     
                     // Clear this accumulator
                     buffers_lock.remove(&final_connection_id);
                     drop(buffers_lock);
                     
-                    Some(merged_event)
+                    result_event
                 } else {
                     // Stream not complete yet, don't emit event
                     None
