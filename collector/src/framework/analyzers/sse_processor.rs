@@ -409,8 +409,6 @@ impl SSEProcessor {
             accumulator.end_time,
             "ssl".to_string(),
             original_event.data.get("function").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown").to_string(),
-            original_event.data.get("comm").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown").to_string(),
-            original_event.data.get("pid").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
             original_event.data.get("tid").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
             json_content,
             text_content,

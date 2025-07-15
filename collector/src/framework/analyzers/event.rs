@@ -13,8 +13,6 @@ pub struct SSEProcessorEvent {
     pub duration_ns: u64,
     pub original_source: String,
     pub function: String,
-    pub comm: String,
-    pub pid: u64,
     pub tid: u64,
     pub json_content: String,
     pub text_content: String,
@@ -32,8 +30,6 @@ impl SSEProcessorEvent {
         end_time: u64,
         original_source: String,
         function: String,
-        comm: String,
-        pid: u64,
         tid: u64,
         json_content: String,
         text_content: String,
@@ -52,8 +48,6 @@ impl SSEProcessorEvent {
             duration_ns,
             original_source,
             function,
-            comm,
-            pid,
             tid,
             json_content,
             text_content,
@@ -71,12 +65,8 @@ impl SSEProcessorEvent {
             "start_time": self.start_time,
             "end_time": self.end_time,
             "duration_ns": self.duration_ns,
-            "duration_ms": self.duration_ns as f64 / 1_000_000.0,
-            "duration_seconds": self.duration_ns as f64 / 1_000_000_000.0,
             "original_source": self.original_source,
             "function": self.function,
-            "comm": self.comm,
-            "pid": self.pid,
             "tid": self.tid,
             "json_content": self.json_content,
             "text_content": self.text_content,
@@ -121,9 +111,6 @@ pub struct HTTPEvent {
     pub is_chunked: bool,
     pub content_length: Option<usize>,
     pub original_source: String,
-    pub comm: String,
-    pub pid: u64,
-    pub timestamp_ns: u64,
     pub raw_data: Option<String>,
 }
 
@@ -144,9 +131,6 @@ impl HTTPEvent {
         is_chunked: bool,
         content_length: Option<usize>,
         original_source: String,
-        comm: String,
-        pid: u64,
-        timestamp_ns: u64,
     ) -> Self {
         HTTPEvent {
             tid,
@@ -164,9 +148,6 @@ impl HTTPEvent {
             is_chunked,
             content_length,
             original_source,
-            comm,
-            pid,
-            timestamp_ns,
             raw_data: None,
         }
     }
@@ -193,9 +174,6 @@ impl HTTPEvent {
             "is_chunked": self.is_chunked,
             "content_length": self.content_length,
             "original_source": self.original_source,
-            "comm": self.comm,
-            "pid": self.pid,
-            "timestamp_ns": self.timestamp_ns,
         });
 
         // Only include raw_data if it's present
@@ -204,7 +182,7 @@ impl HTTPEvent {
         }
 
         Event::new_with_timestamp(
-            self.timestamp_ns / 1_000_000,  // Convert nanoseconds to milliseconds
+            original_event.timestamp,  // Use original event timestamp directly
             "http_parser".to_string(), 
             original_event.pid, 
             original_event.comm.clone(), 

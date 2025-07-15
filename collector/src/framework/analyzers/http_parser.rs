@@ -4,7 +4,6 @@ use crate::framework::runners::EventStream;
 use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
-use serde_json::json;
 use std::collections::HashMap;
 
 /// HTTP Parser Analyzer that parses SSL traffic into HTTP requests/responses
@@ -203,9 +202,6 @@ impl HTTPParser {
             is_chunked,
             content_length,
             "ssl".to_string(),
-            original_event.data.get("comm").unwrap_or(&json!("unknown")).as_str().unwrap_or("unknown").to_string(),
-            original_event.data.get("pid").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
-            original_event.data.get("timestamp_ns").unwrap_or(&json!(0)).as_u64().unwrap_or(0),
         );
 
         // Include raw data if requested
