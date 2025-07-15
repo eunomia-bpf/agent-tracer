@@ -47,23 +47,13 @@ impl SSEProcessor {
         Self::new_with_timeout(30_000)
     }
 
-    /// Create a new SSEProcessor with debug output enabled
-    pub fn new_with_debug() -> Self {
-        SSEProcessor {
-            name: "SSEProcessor".to_string(),
-            sse_buffers: Arc::new(Mutex::new(HashMap::new())),
-            timeout_ms: 30_000,
-            debug: true,
-        }
-    }
-
     /// Create a new SSEProcessor with custom timeout
     pub fn new_with_timeout(timeout_ms: u64) -> Self {
         SSEProcessor {
             name: "SSEProcessor".to_string(),
             sse_buffers: Arc::new(Mutex::new(HashMap::new())),
             timeout_ms,
-            debug: true,
+            debug: false,
         }
     }
 

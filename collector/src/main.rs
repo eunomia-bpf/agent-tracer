@@ -6,7 +6,7 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor}
+    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser}
 };
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -27,6 +27,9 @@ enum Commands {
         /// Enable SSE processing for SSL traffic
         #[arg(long)]
         sse_merge: bool,
+        /// Enable HTTP parsing (automatically enables SSE merge first)
+        #[arg(long)]
+        http_parser: bool,
         /// Suppress console output
         #[arg(short, long)]
         quiet: bool,
@@ -62,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *quiet, args).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, http_parser, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Agent { comm, pid } => run_both_real(&binary_extractor, comm.as_deref(), *pid).await?,
     }
@@ -160,8 +163,8 @@ async fn run_both_real(binary_extractor: &BinaryExtractor, comm: Option<&str>, p
     Ok(())
 }
 
-/// Show raw SSL events as JSON with optional chunk merging
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+/// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -173,8 +176,12 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
         ssl_runner = ssl_runner.with_args(args);
     }
     
-    // Add SSE processor if requested
-    if enable_chunk_merger {
+    // Add analyzers based on flags - when HTTP parser is enabled, always enable SSE merge first
+    if enable_http_parser {
+        ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
+        ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPParser::new_with_debug()));
+        println!("Starting SSL event stream with SSE processing and HTTP parsing enabled (press Ctrl+C to stop):");
+    } else if enable_chunk_merger {
         ssl_runner = ssl_runner.add_analyzer(Box::new(SSEProcessor::new_with_timeout(30000)));
         println!("Starting SSL event stream with SSE processing enabled (press Ctrl+C to stop):");
     } else {
