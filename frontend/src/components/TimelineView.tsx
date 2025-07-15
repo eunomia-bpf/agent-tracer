@@ -48,26 +48,12 @@ export function TimelineView({ events }: TimelineViewProps) {
         colorIndex++;
       }
 
-      const processed: ProcessedEvent = {
+      return {
         ...event,
         datetime,
         formattedTime,
         sourceColor: sourceColorMap.get(event.source) || sourceColors[0]
       };
-
-      // Add HTTP-specific metadata
-      if (event.source === 'http_parser' && event.data) {
-        processed.isHttpRequest = event.data.message_type === 'request';
-        processed.isHttpResponse = event.data.message_type === 'response';
-        processed.httpMethod = event.data.method;
-        processed.httpPath = event.data.path;
-        processed.httpStatusCode = event.data.status_code;
-        processed.httpStatusText = event.data.status_text;
-        processed.processName = event.data.comm;
-        processed.processId = event.data.pid;
-      }
-
-      return processed;
     });
   }, [events]);
 
@@ -117,35 +103,11 @@ export function TimelineView({ events }: TimelineViewProps) {
 
   // Format event label for timeline
   const formatEventLabel = (event: ProcessedEvent) => {
-    if (event.isHttpRequest) {
-      return `${event.httpMethod} ${event.httpPath?.split('?')[0] || ''}`;
-    }
-    if (event.isHttpResponse) {
-      return `${event.httpStatusCode} ${event.httpStatusText}`;
-    }
-    if (event.data.comm) {
-      return `${event.data.comm}`;
-    }
-    return event.source;
+    return `${event.source} event`;
   };
 
-  // Get event color based on type
+  // Get event color based on source
   const getEventColor = (event: ProcessedEvent) => {
-    if (event.isHttpRequest) {
-      switch (event.httpMethod) {
-        case 'GET': return '#10B981';
-        case 'POST': return '#3B82F6';
-        case 'PUT': return '#F59E0B';
-        case 'DELETE': return '#EF4444';
-        default: return '#6B7280';
-      }
-    }
-    if (event.isHttpResponse) {
-      const status = event.httpStatusCode;
-      if (status && status >= 200 && status < 300) return '#10B981';
-      if (status && status >= 400) return '#EF4444';
-      return '#6B7280';
-    }
     return event.sourceColor;
   };
 
@@ -291,38 +253,6 @@ export function TimelineView({ events }: TimelineViewProps) {
                   </div>
                 </div>
 
-                {/* HTTP Details */}
-                {(selectedEvent.isHttpRequest || selectedEvent.isHttpResponse) && (
-                  <div className="border-t pt-4">
-                    <h3 className="font-medium text-gray-900 mb-2">HTTP Details</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      {selectedEvent.httpMethod && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.httpMethod}</div>
-                        </div>
-                      )}
-                      {selectedEvent.httpPath && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Path</label>
-                          <div className="text-sm text-gray-900 font-mono break-all">{selectedEvent.httpPath}</div>
-                        </div>
-                      )}
-                      {selectedEvent.httpStatusCode && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.httpStatusCode} {selectedEvent.httpStatusText}</div>
-                        </div>
-                      )}
-                      {selectedEvent.processName && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Process</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.processName} ({selectedEvent.processId})</div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
 
                 {/* Raw Data */}
                 <div className="border-t pt-4">

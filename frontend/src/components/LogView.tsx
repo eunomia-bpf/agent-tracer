@@ -11,7 +11,6 @@ export function LogView({ events }: LogViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSource, setSelectedSource] = useState<string>('');
   const [selectedEvent, setSelectedEvent] = useState<ProcessedEvent | null>(null);
-  const [showRawData, setShowRawData] = useState(false);
 
   // Process events with additional metadata
   const processedEvents: ProcessedEvent[] = useMemo(() => {
@@ -44,26 +43,12 @@ export function LogView({ events }: LogViewProps) {
         colorIndex++;
       }
 
-      const processed: ProcessedEvent = {
+      return {
         ...event,
         datetime,
         formattedTime,
         sourceColor: sourceColorMap.get(event.source) || sourceColors[0]
       };
-
-      // Add HTTP-specific metadata
-      if (event.source === 'http_parser' && event.data) {
-        processed.isHttpRequest = event.data.message_type === 'request';
-        processed.isHttpResponse = event.data.message_type === 'response';
-        processed.httpMethod = event.data.method;
-        processed.httpPath = event.data.path;
-        processed.httpStatusCode = event.data.status_code;
-        processed.httpStatusText = event.data.status_text;
-        processed.processName = event.data.comm;
-        processed.processId = event.data.pid;
-      }
-
-      return processed;
     });
   }, [events]);
 
@@ -92,10 +77,7 @@ export function LogView({ events }: LogViewProps) {
       filtered = filtered.filter(event => 
         event.source.toLowerCase().includes(term) ||
         event.id.toLowerCase().includes(term) ||
-        JSON.stringify(event.data).toLowerCase().includes(term) ||
-        event.processName?.toLowerCase().includes(term) ||
-        event.httpMethod?.toLowerCase().includes(term) ||
-        event.httpPath?.toLowerCase().includes(term)
+        JSON.stringify(event.data).toLowerCase().includes(term)
       );
     }
 
@@ -105,16 +87,7 @@ export function LogView({ events }: LogViewProps) {
   const sources = Object.keys(groupedEvents);
 
   const formatEventSummary = (event: ProcessedEvent) => {
-    if (event.isHttpRequest) {
-      return `${event.httpMethod} ${event.httpPath} (${event.processName})`;
-    }
-    if (event.isHttpResponse) {
-      return `${event.httpStatusCode} ${event.httpStatusText}`;
-    }
-    if (event.data.comm) {
-      return `Process: ${event.data.comm}`;
-    }
-    return `Event from ${event.source}`;
+    return `${event.source} event`;
   };
 
   return (
@@ -172,22 +145,6 @@ export function LogView({ events }: LogViewProps) {
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${event.sourceColor}`}>
                         {event.source}
                       </span>
-                      {event.isHttpRequest && (
-                        <span className="inline-flex px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                          {event.httpMethod}
-                        </span>
-                      )}
-                      {event.isHttpResponse && (
-                        <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                          event.httpStatusCode && event.httpStatusCode >= 200 && event.httpStatusCode < 300
-                            ? 'bg-green-100 text-green-800'
-                            : event.httpStatusCode && event.httpStatusCode >= 400
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {event.httpStatusCode}
-                        </span>
-                      )}
                     </div>
                     <div className="text-sm text-gray-900 mb-1">
                       {formatEventSummary(event)}
@@ -244,57 +201,15 @@ export function LogView({ events }: LogViewProps) {
                   </div>
                 </div>
 
-                {/* HTTP-specific details */}
-                {(selectedEvent.isHttpRequest || selectedEvent.isHttpResponse) && (
-                  <div className="border-t pt-4">
-                    <h3 className="font-medium text-gray-900 mb-2">HTTP Details</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      {selectedEvent.httpMethod && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.httpMethod}</div>
-                        </div>
-                      )}
-                      {selectedEvent.httpPath && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Path</label>
-                          <div className="text-sm text-gray-900 font-mono break-all">{selectedEvent.httpPath}</div>
-                        </div>
-                      )}
-                      {selectedEvent.httpStatusCode && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.httpStatusCode} {selectedEvent.httpStatusText}</div>
-                        </div>
-                      )}
-                      {selectedEvent.processName && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Process</label>
-                          <div className="text-sm text-gray-900">{selectedEvent.processName} ({selectedEvent.processId})</div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
 
                 {/* Raw Data */}
                 <div className="border-t pt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium text-gray-900">Raw Data</h3>
-                    <button
-                      onClick={() => setShowRawData(!showRawData)}
-                      className="text-sm text-blue-600 hover:text-blue-700"
-                    >
-                      {showRawData ? 'Hide' : 'Show'} Raw JSON
-                    </button>
+                  <h3 className="font-medium text-gray-900 mb-2">Raw Data</h3>
+                  <div className="bg-gray-50 rounded-md p-3 max-h-64 overflow-y-auto">
+                    <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">
+                      {JSON.stringify(selectedEvent.data, null, 2)}
+                    </pre>
                   </div>
-                  {showRawData && (
-                    <div className="bg-gray-50 rounded-md p-3 max-h-64 overflow-y-auto">
-                      <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">
-                        {JSON.stringify(selectedEvent.data, null, 2)}
-                      </pre>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
