@@ -15,4 +15,5 @@ export interface ProcessedEvent extends Event {
   datetime: Date;
   formattedTime: string;
   sourceColor: string;
+  sourceColorClass: string;
 }
