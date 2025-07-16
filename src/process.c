@@ -18,12 +18,11 @@
 #define FILE_DEDUP_WINDOW_NS 60000000000ULL  // 60 seconds in nanoseconds
 #define MAX_FILE_HASHES 1024
 
-// Simple hash table for file operation deduplication
+// Simple hash table for FILE_OPEN deduplication
 struct file_hash_entry {
     uint64_t hash;
     uint64_t timestamp_ns;
     uint32_t count;
-    bool is_open;  // Track whether this is FILE_OPEN or FILE_CLOSE
 };
 
 static struct file_hash_entry file_hashes[MAX_FILE_HASHES];
@@ -168,22 +167,17 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 
 static volatile bool exiting = false;
 
-// Shared function to print FILE_OPEN/FILE_CLOSE events
-static void print_file_operation_event(const struct event *e, uint64_t timestamp_ns, uint32_t count, const char *extra_fields)
+// Shared function to print FILE_OPEN events
+static void print_file_open_event(const struct event *e, uint64_t timestamp_ns, uint32_t count, const char *extra_fields)
 {
 	printf("{");
 	printf("\"timestamp\":%llu,", timestamp_ns);
-	printf("\"event\":\"%s\",", e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE");
+	printf("\"event\":\"FILE_OPEN\",");
 	printf("\"comm\":\"%s\",", e->comm);
 	printf("\"pid\":%d,", e->pid);
-	printf("\"count\":%u", count);
-	
-	if (e->file_op.is_open) {
-		printf(",\"filepath\":\"%s\",", e->file_op.filepath);
-		printf("\"flags\":%d", e->file_op.flags);
-	} else {
-		printf(",\"fd\":%d", e->file_op.fd);
-	}
+	printf("\"count\":%u,", count);
+	printf("\"filepath\":\"%s\",", e->file_op.filepath);
+	printf("\"flags\":%d", e->file_op.flags);
 	
 	if (extra_fields && strlen(extra_fields) > 0) {
 		printf(",%s", extra_fields);
@@ -192,12 +186,12 @@ static void print_file_operation_event(const struct event *e, uint64_t timestamp
 	printf("}\n");
 }
 
-// Shared function to print aggregated file events (for expired/process exit)
-static void print_aggregated_file_event(uint64_t timestamp_ns, uint32_t count, pid_t pid, bool is_open, const char *extra_fields)
+// Shared function to print aggregated FILE_OPEN events (for expired/process exit)
+static void print_aggregated_file_open(uint64_t timestamp_ns, uint32_t count, pid_t pid, const char *extra_fields)
 {
 	printf("{");
 	printf("\"timestamp\":%llu,", timestamp_ns);
-	printf("\"event\":\"%s\",", is_open ? "FILE_OPEN" : "FILE_CLOSE");
+	printf("\"event\":\"FILE_OPEN\",");
 	printf("\"pid\":%d,", pid);
 	printf("\"count\":%u", count);
 	
@@ -208,35 +202,29 @@ static void print_aggregated_file_event(uint64_t timestamp_ns, uint32_t count, p
 	printf("}\n");
 }
 
-// Hash function for file operation event
-static uint64_t hash_file_operation(const struct event *e)
+// Hash function for FILE_OPEN events
+static uint64_t hash_file_open(const struct event *e)
 {
 	uint64_t hash = 5381;
 	hash = ((hash << 5) + hash) + e->pid;
-	hash = ((hash << 5) + hash) + (e->file_op.is_open ? 1 : 0);
 	
-	if (e->file_op.is_open) {
-		// For FILE_OPEN: hash the filepath
-		const char *str = e->file_op.filepath;
-		while (*str) {
-			hash = ((hash << 5) + hash) + *str++;
-		}
-	} else {
-		// For FILE_CLOSE: hash the fd (file descriptor)
-		hash = ((hash << 5) + hash) + e->file_op.fd;
+	// Hash the filepath for FILE_OPEN events
+	const char *str = e->file_op.filepath;
+	while (*str) {
+		hash = ((hash << 5) + hash) + *str++;
 	}
 	
 	return hash;
 }
 
-// Get count for file operation (handles deduplication internally)
-static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
+// Get count for FILE_OPEN operations (handles deduplication internally)
+static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns)
 {
-	if (e->type != EVENT_TYPE_FILE_OPERATION) {
-		return 1;  // Return count of 1 for non-file operations
+	if (e->type != EVENT_TYPE_FILE_OPERATION || !e->file_op.is_open) {
+		return 1;  // Return count of 1 for non-FILE_OPEN operations
 	}
 	
-	uint64_t hash = hash_file_operation(e);
+	uint64_t hash = hash_file_open(e);
 	
 	// Clean up expired entries first
 	for (int i = 0; i < hash_count; i++) {
@@ -244,10 +232,10 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 			// Print aggregated result if count > 1
 			if (file_hashes[i].count > 1) {
 				if (env.verbose) {
-					fprintf(stderr, "DEBUG: Aggregation window expired for %s, count=%u\n", 
-						file_hashes[i].is_open ? "FILE_OPEN" : "FILE_CLOSE", file_hashes[i].count);
+					fprintf(stderr, "DEBUG: Aggregation window expired for FILE_OPEN, count=%u\n", 
+						file_hashes[i].count);
 				}
-				print_aggregated_file_event(timestamp_ns, file_hashes[i].count, 0, file_hashes[i].is_open, "\"window_expired\":true");
+				print_aggregated_file_open(timestamp_ns, file_hashes[i].count, 0, "\"window_expired\":true");
 			}
 			
 			// Remove expired entry
@@ -263,8 +251,8 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 			file_hashes[i].count++;
 			file_hashes[i].timestamp_ns = timestamp_ns;
 			if (env.verbose) {
-				fprintf(stderr, "DEBUG: Aggregating %s for PID %d, count now %u\n", 
-					e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE", e->pid, file_hashes[i].count);
+				fprintf(stderr, "DEBUG: Aggregating FILE_OPEN for PID %d, count now %u\n", 
+					e->pid, file_hashes[i].count);
 			}
 			return 0;  // Return 0 to indicate this should be skipped (duplicate)
 		}
@@ -275,11 +263,10 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 		file_hashes[hash_count].hash = hash;
 		file_hashes[hash_count].timestamp_ns = timestamp_ns;
 		file_hashes[hash_count].count = 1;
-		file_hashes[hash_count].is_open = e->file_op.is_open;
 		hash_count++;
 		if (env.verbose) {
-			fprintf(stderr, "DEBUG: Created new aggregation entry for %s, PID %d (total entries: %d)\n", 
-				e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE", e->pid, hash_count);
+			fprintf(stderr, "DEBUG: Created new aggregation entry for FILE_OPEN, PID %d (total entries: %d)\n", 
+				e->pid, hash_count);
 		}
 	} else if (env.verbose) {
 		fprintf(stderr, "DEBUG: Max aggregation entries reached (%d), cannot track more\n", MAX_FILE_HASHES);
@@ -288,23 +275,23 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 	return 1;  // Return count of 1 for first occurrence
 }
 
-// Flush all pending aggregations for a specific PID
-static void flush_pid_file_ops(pid_t pid, uint64_t timestamp_ns)
+// Flush all pending FILE_OPEN aggregations for a specific PID
+static void flush_pid_file_opens(pid_t pid, uint64_t timestamp_ns)
 {
 	int flushed_count = 0;
 	for (int i = 0; i < hash_count; i++) {
 		if (file_hashes[i].count > 1) {
 			if (env.verbose) {
-				fprintf(stderr, "DEBUG: Flushing %s aggregation on process exit, PID %d, count=%u\n", 
-					file_hashes[i].is_open ? "FILE_OPEN" : "FILE_CLOSE", pid, file_hashes[i].count);
+				fprintf(stderr, "DEBUG: Flushing FILE_OPEN aggregation on process exit, PID %d, count=%u\n", 
+					pid, file_hashes[i].count);
 			}
-			print_aggregated_file_event(timestamp_ns, file_hashes[i].count, pid, file_hashes[i].is_open, "\"reason\":\"process_exit\"");
+			print_aggregated_file_open(timestamp_ns, file_hashes[i].count, pid, "\"reason\":\"process_exit\"");
 			flushed_count++;
 		}
 	}
 	
 	if (env.verbose && hash_count > 0) {
-		fprintf(stderr, "DEBUG: Cleared %d aggregation entries for PID %d (flushed %d)\n", 
+		fprintf(stderr, "DEBUG: Cleared %d FILE_OPEN aggregation entries for PID %d (flushed %d)\n", 
 			hash_count, pid, flushed_count);
 	}
 	
@@ -440,8 +427,8 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 				if (e->duration_ns)
 					printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
 				
-				// Flush all pending aggregations for this PID
-				flush_pid_file_ops(e->pid, timestamp_ns);
+				// Flush all pending FILE_OPEN aggregations for this PID
+				flush_pid_file_opens(e->pid, timestamp_ns);
 			} else {
 				printf(",\"filename\":\"%s\"", e->filename);
 			}
@@ -460,16 +447,21 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 			break;
 			
 		case EVENT_TYPE_FILE_OPERATION:
-			// Get count for this file operation
-			uint32_t count = get_file_op_count(e, timestamp_ns);
+			// Only handle FILE_OPEN events, skip FILE_CLOSE
+			if (!e->file_op.is_open) {
+				break;
+			}
+			
+			// Get count for this FILE_OPEN operation
+			uint32_t count = get_file_open_count(e, timestamp_ns);
 			
 			// Skip if this is a duplicate (count == 0)
 			if (count == 0) {
 				break;
 			}
 			
-			// Report the event with count
-			print_file_operation_event(e, timestamp_ns, count, NULL);
+			// Report the FILE_OPEN event with count
+			print_file_open_event(e, timestamp_ns, count, NULL);
 			break;
 			
 		default:
@@ -584,7 +576,7 @@ cleanup:
 		free(env.command_list[i]);
 	}
 	
-	/* Clean up file deduplication tracking */
+	/* Clean up FILE_OPEN deduplication tracking */
 	hash_count = 0;
 
 	return err < 0 ? -err : 0;

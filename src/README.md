@@ -6,13 +6,13 @@ This directory contains two powerful eBPF-based monitoring tools for system obse
 
 ### 1. Process Tracer (`process`)
 
-An advanced eBPF-based process monitoring tool that traces process lifecycles and file operations with intelligent event deduplication.
+An advanced eBPF-based process monitoring tool that traces process lifecycles and file open operations with intelligent event deduplication.
 
 **Key Features:**
 - Monitor process creation and termination
-- Track file read/write operations with deduplication
+- Track file open operations with deduplication
 - Configurable filtering modes for different monitoring levels
-- 60-second sliding window aggregation for repetitive file operations
+- 60-second sliding window aggregation for repetitive file opens
 - JSON output format for integration with analysis frameworks
 - Verbose debugging mode for troubleshooting
 
@@ -36,9 +36,9 @@ sudo ./process [OPTIONS]
 | `--all` | `-a` | Deprecated: use `-m 0` instead | - |
 
 **Filter Modes:**
-- `0 (all)`: Trace all processes and all read/write operations
-- `1 (proc)`: Trace all processes but only read/write for tracked PIDs  
-- `2 (filter)`: Only trace processes matching filters and their read/write (default)
+- `0 (all)`: Trace all processes and all file open operations
+- `1 (proc)`: Trace all processes but only file opens for tracked PIDs  
+- `2 (filter)`: Only trace processes matching filters and their file opens (default)
 
 **Examples:**
 ```bash
@@ -61,12 +61,12 @@ sudo ./process -v -p 1234
 sudo ./process -c "curl,wget" -d 500
 ```
 
-**File Operation Deduplication:**
-- First occurrence of file operations reported immediately (`count=1`)
-- Subsequent identical operations within 60-second window are aggregated
+**File Open Deduplication:**
+- First occurrence of file opens reported immediately (`count=1`)
+- Subsequent identical file opens within 60-second window are aggregated
 - Aggregated results reported when window expires (`count=N`)
 - All pending aggregations flushed on process exit
-- Reduces event volume by 80-95% for repetitive operations
+- Reduces event volume by 80-95% for repetitive file opens
 
 **Verbose Debug Output (`-v`):**
 - Shows when events are deduplicated/aggregated
@@ -229,7 +229,7 @@ Both tools output JSON-formatted events to stdout, with debug information sent t
 }
 ```
 
-**File Operation Events:**
+**File Open Events:**
 ```json
 {
   "timestamp": 1234567890123456789,

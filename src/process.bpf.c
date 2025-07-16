@@ -280,7 +280,7 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	return 0;
 }
 
-/* Helper function to check if PID should be tracked for file operations */
+/* Helper function to check if PID should be tracked for file open operations */
 static __always_inline bool should_trace_file_ops(pid_t pid)
 {
 	/* Check if PID is tracked */
@@ -330,7 +330,7 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
 	e->exit_event = false;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	
-	/* Copy filepath and set file operation details */
+	/* Copy filepath and set file open details */
 	bpf_probe_read_kernel_str(e->file_op.filepath, sizeof(e->file_op.filepath), filepath);
 	e->file_op.fd = -1; /* Will be set on return if needed */
 	e->file_op.flags = flags;
@@ -379,7 +379,7 @@ int trace_open(struct trace_event_raw_sys_enter *ctx)
 	e->exit_event = false;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	
-	/* Copy filepath and set file operation details */
+	/* Copy filepath and set file open details */
 	bpf_probe_read_kernel_str(e->file_op.filepath, sizeof(e->file_op.filepath), filepath);
 	e->file_op.fd = -1;
 	e->file_op.flags = flags;
@@ -390,45 +390,4 @@ int trace_open(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
-/* Syscall tracepoint for close */
-SEC("tp/syscalls/sys_enter_close")
-int trace_close(struct trace_event_raw_sys_enter *ctx)
-{
-	struct event *e;
-	pid_t pid;
-	int fd;
-
-	pid = bpf_get_current_pid_tgid() >> 32;
-
-	/* Check if this PID should be traced */
-	if (!should_trace_file_ops(pid))
-		return 0;
-
-	/* Get file descriptor argument */
-	fd = (int)ctx->args[0];
-
-	/* Reserve sample from BPF ringbuf */
-	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-	if (!e)
-		return 0;
-
-	/* Fill out the event */
-	e->type = EVENT_TYPE_FILE_OPERATION;
-	e->pid = pid;
-	e->ppid = 0;
-	e->exit_code = 0;
-	e->duration_ns = 0;
-	e->exit_event = false;
-	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	
-	/* Set file operation details for close */
-	e->file_op.filepath[0] = '\0'; /* No filepath for close */
-	e->file_op.fd = fd;
-	e->file_op.flags = 0;
-	e->file_op.is_open = false;
-
-	/* Submit to user-space */
-	bpf_ringbuf_submit(e, 0);
-	return 0;
-}
 
