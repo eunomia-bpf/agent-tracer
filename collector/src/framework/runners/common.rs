@@ -78,7 +78,7 @@ impl BinaryExecutor {
         // Clone needed data for the stream
         let runner_name = self.runner_name.clone();
         let binary_path = self.binary_path.clone();
-        
+
         let stream = async_stream::stream! {
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
@@ -126,14 +126,21 @@ impl BinaryExecutor {
                                     }
                                 }
                             } else {
-                                log::warn!("Skipping non-JSON line {} from binary: {}", 
-                                    line_count, 
-                                    if trimmed.len() > 100 { 
-                                        format!("{}...", &trimmed[..100]) 
-                                    } else { 
-                                        trimmed.to_string() 
-                                    }
-                                );
+                                // Check if this might be a stderr message or debug output
+                                if trimmed.contains("error") || trimmed.contains("warn") || 
+                                   trimmed.contains("failed") || trimmed.contains("Error:") {
+                                    log::warn!("Possible error message from binary at line {}: {}", 
+                                        line_count, trimmed);
+                                } else {
+                                    log::warn!("Skipping non-JSON line {} from binary: {}", 
+                                        line_count, 
+                                        if trimmed.len() > 100 { 
+                                            format!("{}...", &trimmed[..100]) 
+                                        } else { 
+                                            trimmed.to_string() 
+                                        }
+                                    );
+                                }
                             }
                         }
                     }
@@ -149,42 +156,75 @@ impl BinaryExecutor {
                                         .unwrap_or("unknown")
                                 ));
                             
-                            // Convert raw bytes to a printable format
-                            let raw_data = line.as_bytes();
-                            let printable_data = raw_data.iter()
-                                .map(|&b| {
-                                    if b.is_ascii_graphic() || b == b' ' {
-                                        // Printable ASCII characters
-                                        char::from(b).to_string()
-                                    } else if b == b'\t' {
-                                        "\\t".to_string()
-                                    } else if b == b'\r' {
-                                        "\\r".to_string()
-                                    } else if b == b'\n' {
-                                        "\\n".to_string()
-                                    } else if b == b'\0' {
-                                        "\\0".to_string()
-                                    } else {
-                                        // Non-printable characters as hex
-                                        format!("\\x{:02x}", b)
-                                    }
-                                })
-                                .collect::<String>();
+                            // Try to recover partial data up to the invalid UTF-8 sequence
+                            let raw_bytes = line.as_bytes();
+                            let valid_up_to = String::from_utf8_lossy(raw_bytes);
                             
-                            // Also show hex dump for debugging
-                            let hex_dump = raw_data.iter()
-                                .take(32) // Show first 32 bytes
+                            // If we have a partial JSON object, try to parse it
+                            if valid_up_to.trim_start().starts_with('{') {
+                                // Find the position of the invalid UTF-8
+                                let mut valid_len = 0;
+                                for i in 0..raw_bytes.len() {
+                                    if std::str::from_utf8(&raw_bytes[0..=i]).is_ok() {
+                                        valid_len = i + 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                
+                                if valid_len > 0 {
+                                    if let Ok(valid_str) = std::str::from_utf8(&raw_bytes[0..valid_len]) {
+                                        log::debug!("Recovered {} valid UTF-8 bytes before error", valid_len);
+                                        // Try to parse the valid portion
+                                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(valid_str.trim()) {
+                                            log::info!("Successfully recovered partial JSON despite UTF-8 error");
+                                            yield json_value;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Log detailed error information
+                            let hex_preview = raw_bytes.iter()
+                                .take(64) // Show more context
                                 .map(|b| format!("{:02x}", b))
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             
-                            log::warn!("{}Invalid UTF-8 data from binary at line {}. Raw data (printable): '{}', (hex): '{}'",
-                                runner_info, line_count + 1, printable_data, hex_dump);
+                            log::warn!(
+                                "{}Invalid UTF-8 at line {} (attempted recovery failed). Hex preview: {}",
+                                runner_info, line_count + 1, hex_preview
+                            );
                             
-                            // Try to read the next line 
+                            // Clear the line buffer and continue
+                            line.clear();
+                            continue;
+                        } else if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                            // Handle partial reads at EOF gracefully
+                            if !line.is_empty() {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                                    // Try to parse incomplete JSON at EOF
+                                    match serde_json::from_str::<serde_json::Value>(trimmed) {
+                                        Ok(json_value) => {
+                                            log::debug!("Parsed final JSON line at EOF");
+                                            yield json_value;
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Failed to parse final line at EOF: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            log::debug!("Reached EOF while reading");
+                            break;
+                        } else if e.kind() == std::io::ErrorKind::Interrupted {
+                            // Retry on interrupted system calls
+                            log::debug!("Read interrupted, retrying...");
                             continue;
                         } else {
-                            log::warn!("Error reading from binary: {}", e);
+                            log::warn!("Error reading from binary: {} (kind: {:?})", e, e.kind());
                             break;
                         }
                     }

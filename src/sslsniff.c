@@ -13,6 +13,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <locale.h>
+#include <wchar.h>
+#include <string.h>
 
 #include "sslsniff.skel.h"
 #include "sslsniff.h"
@@ -242,6 +245,62 @@ char *find_library_path(const char *libname) {
 // Global buffer allocated once and reused
 static char *event_buf = NULL;
 
+// Function to validate UTF-8 sequence and return its length
+// Returns 0 if invalid, otherwise returns the number of bytes in the sequence
+int validate_utf8_char(const unsigned char *str, size_t remaining) {
+	if (!str || remaining == 0) return 0;
+	
+	unsigned char c = str[0];
+	
+	// ASCII character (0-127)
+	if (c < 0x80) return 1;
+	
+	// Determine the expected length of UTF-8 sequence
+	int expected_len = 0;
+	if ((c & 0xE0) == 0xC0) expected_len = 2;      // 110xxxxx
+	else if ((c & 0xF0) == 0xE0) expected_len = 3; // 1110xxxx
+	else if ((c & 0xF8) == 0xF0) expected_len = 4; // 11110xxx
+	else return 0; // Invalid start byte
+	
+	// Check if we have enough bytes
+	if (remaining < expected_len) return 0;
+	
+	// Create a buffer for mbstowcs
+	char temp[5] = {0};
+	for (int i = 0; i < expected_len && i < 4; i++) {
+		temp[i] = str[i];
+	}
+	
+	// Set locale for UTF-8 (done once in main)
+	wchar_t wc;
+	mbstate_t state;
+	memset(&state, 0, sizeof(state));
+	
+	// Try to convert the sequence
+	size_t result = mbrtowc(&wc, temp, expected_len, &state);
+	
+	// Check for conversion errors
+	if (result == (size_t)-1 || result == (size_t)-2 || result == 0) {
+		return 0; // Invalid sequence
+	}
+	
+	// Additional validation for overlong sequences and valid code points
+	if (expected_len == 2) {
+		unsigned int codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
+		if (codepoint < 0x80) return 0; // Overlong
+	} else if (expected_len == 3) {
+		unsigned int codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+		if (codepoint < 0x800) return 0; // Overlong
+		if (codepoint >= 0xD800 && codepoint <= 0xDFFF) return 0; // Surrogate
+	} else if (expected_len == 4) {
+		unsigned int codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | 
+		                        ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+		if (codepoint < 0x10000 || codepoint > 0x10FFFF) return 0; // Invalid range
+	}
+	
+	return expected_len;
+}
+
 // Function to print the event from the perf buffer in JSON format
 void print_event(struct probe_SSL_data_t *event, const char *evt) {
 	static unsigned long long start = 0;  // Use static to retain value across function calls
@@ -331,8 +390,19 @@ void print_event(struct probe_SSL_data_t *event, const char *evt) {
 				// ASCII printable characters
 				printf("%c", c);
 			} else if (c >= 128) {
-				// UTF-8 multi-byte sequence - pass through as-is
-				printf("%c", c);
+				// Use our new UTF-8 validation function
+				int utf8_len = validate_utf8_char((unsigned char *)&event_buf[i], buf_size - i);
+				
+				if (utf8_len > 0) {
+					// Output the valid UTF-8 sequence
+					for (int j = 0; j < utf8_len; j++) {
+						printf("%c", event_buf[i + j]);
+					}
+					i += utf8_len - 1; // Skip the continuation bytes
+				} else {
+					// Invalid UTF-8 byte - escape it
+					printf("\\u%04x", c);
+				}
 			} else {
 				// Control characters (0-31, 127)
 				printf("\\u%04x", c);
@@ -376,6 +446,9 @@ int main(int argc, char **argv) {
 	err = argp_parse(&argp, argc, argv, 0, NULL, NULL);
 	if (err)
 		return err;
+
+	// Set locale for UTF-8 support
+	setlocale(LC_ALL, "");
 
 	libbpf_set_print(libbpf_print_fn);
 
