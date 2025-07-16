@@ -9,6 +9,7 @@ interface TimelineMinimapProps {
   baseTimeSpan: number;
   timeSpan: number;
   scrollOffset: number;
+  onScrollChange?: (offset: number) => void;
 }
 
 interface TimelineGroup {
@@ -23,7 +24,8 @@ export function TimelineMinimap({
   visibleTimeRange,
   baseTimeSpan,
   timeSpan,
-  scrollOffset
+  scrollOffset,
+  onScrollChange
 }: TimelineMinimapProps) {
   // Group events by source for minimap
   const timelineGroups: TimelineGroup[] = [];
@@ -44,6 +46,16 @@ export function TimelineMinimap({
     });
   });
 
+  const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onScrollChange) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickPosition = (e.clientX - rect.left) / rect.width;
+    const maxOffset = baseTimeSpan - timeSpan;
+    const newOffset = clickPosition * maxOffset;
+    onScrollChange(Math.max(0, Math.min(maxOffset, newOffset)));
+  };
+
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-2">
@@ -52,7 +64,10 @@ export function TimelineMinimap({
           {Math.round((scrollOffset / (baseTimeSpan - timeSpan)) * 100)}% scrolled
         </span>
       </div>
-      <div className="relative h-4 bg-gray-100 rounded-sm">
+      <div 
+        className="relative h-4 bg-gray-100 rounded-sm cursor-pointer" 
+        onClick={handleMinimapClick}
+      >
         {/* Full timeline background */}
         <div className="absolute inset-0 bg-gray-200 rounded-sm" />
         

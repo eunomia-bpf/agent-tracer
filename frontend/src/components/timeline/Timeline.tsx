@@ -9,6 +9,7 @@ import { ZoomControls } from './ZoomControls';
 import { TimelineAxis } from './TimelineAxis';
 import { TimelineMinimap } from './TimelineMinimap';
 import { TimelineGroup } from './TimelineGroup';
+import { TimelineScrollBar } from './TimelineScrollBar';
 
 interface TimelineProps {
   events: Event[];
@@ -94,13 +95,33 @@ export function Timeline({ events }: TimelineProps) {
   };
 
   // Zoom functions
-  const zoomIn = () => {
-    setZoomLevel(prev => Math.min(prev * 1.5, 10));
-  };
+  const zoomIn = useCallback(() => {
+    setZoomLevel(prev => {
+      const newZoom = Math.min(prev * 1.5, 10);
+      // Adjust scroll offset to maintain center position when zooming
+      const currentCenter = scrollOffset + (baseTimeSpan / prev) / 2;
+      const newZoomedSpan = baseTimeSpan / newZoom;
+      const newOffset = Math.max(0, Math.min(baseTimeSpan - newZoomedSpan, currentCenter - newZoomedSpan / 2));
+      setScrollOffset(newOffset);
+      return newZoom;
+    });
+  }, [scrollOffset, baseTimeSpan]);
 
-  const zoomOut = () => {
-    setZoomLevel(prev => Math.max(prev / 1.5, 0.1));
-  };
+  const zoomOut = useCallback(() => {
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev / 1.5, 0.1);
+      if (newZoom === 1) {
+        setScrollOffset(0);
+      } else {
+        // Adjust scroll offset to maintain center position when zooming
+        const currentCenter = scrollOffset + (baseTimeSpan / prev) / 2;
+        const newZoomedSpan = baseTimeSpan / newZoom;
+        const newOffset = Math.max(0, Math.min(baseTimeSpan - newZoomedSpan, currentCenter - newZoomedSpan / 2));
+        setScrollOffset(newOffset);
+      }
+      return newZoom;
+    });
+  }, [scrollOffset, baseTimeSpan]);
 
   const resetZoom = () => {
     setZoomLevel(1);
@@ -138,7 +159,7 @@ export function Timeline({ events }: TimelineProps) {
       e.preventDefault();
       const delta = e.deltaY;
       const zoomedSpan = baseTimeSpan / zoomLevel;
-      const scrollStep = zoomedSpan * 0.05; // 5% of visible range
+      const scrollStep = zoomedSpan * 0.1; // 10% of visible range for smoother scrolling
       const maxOffset = baseTimeSpan - zoomedSpan;
       
       if (delta > 0) {
@@ -177,7 +198,7 @@ export function Timeline({ events }: TimelineProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [zoomLevel, scrollLeft, scrollRight]);
+  }, [zoomLevel, scrollLeft, scrollRight, zoomIn, zoomOut]);
 
   return (
     <div className="bg-white rounded-lg shadow-md">
@@ -237,6 +258,14 @@ export function Timeline({ events }: TimelineProps) {
               timeSpan={timeSpan}
             />
 
+            {/* Scroll bar - Only show when zoomed */}
+            <TimelineScrollBar
+              zoomLevel={zoomLevel}
+              scrollOffset={scrollOffset}
+              baseTimeSpan={baseTimeSpan}
+              onScrollChange={setScrollOffset}
+            />
+
             {/* Scroll indicator/minimap - Only show when zoomed */}
             {zoomLevel > 1 && (
               <TimelineMinimap
@@ -246,6 +275,7 @@ export function Timeline({ events }: TimelineProps) {
                 baseTimeSpan={baseTimeSpan}
                 timeSpan={timeSpan}
                 scrollOffset={scrollOffset}
+                onScrollChange={setScrollOffset}
               />
             )}
 

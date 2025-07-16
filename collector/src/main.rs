@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::signal;
 
 mod framework;
 
@@ -9,8 +12,35 @@ use framework::{
     analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter}
 };
 
+// Global reference to HTTP filter for metrics printing
+static HTTP_FILTER_METRICS: std::sync::OnceLock<Arc<Mutex<Option<HTTPFilter>>>> = std::sync::OnceLock::new();
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+}
+
+async fn setup_signal_handler() {
+    let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+        .expect("Failed to install SIGINT handler");
+    
+    tokio::spawn(async move {
+        sigint.recv().await;
+        println!("\n\nReceived SIGINT, shutting down...");
+        
+        // Print HTTP filter metrics if available
+        if let Some(http_filter_ref) = HTTP_FILTER_METRICS.get() {
+            if let Ok(filter_guard) = http_filter_ref.lock() {
+                if let Some(ref filter) = *filter_guard {
+                    println!("=== HTTP Filter Metrics ===");
+                    filter.print_metrics();
+                }
+            }
+        }
+        
+        SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+        std::process::exit(0);
+    });
 }
 
 #[derive(Parser)]
@@ -113,6 +143,12 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    
+    // Setup signal handler for graceful shutdown
+    setup_signal_handler().await;
+    
+    // Initialize HTTP filter metrics storage
+    HTTP_FILTER_METRICS.set(Arc::new(Mutex::new(None))).unwrap();
     
     // Create BinaryExtractor with embedded binaries
     let binary_extractor = BinaryExtractor::new().await?;
@@ -231,7 +267,7 @@ async fn run_agent(
     ssl_raw_data: bool,
     process_enabled: bool,
     comm: Option<&str>,
-    pid: Option<u32>,
+    _pid: Option<u32>,
     duration: Option<u32>,
     mode: Option<u32>,
     http_filter: &[String],

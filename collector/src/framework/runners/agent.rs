@@ -27,12 +27,6 @@ impl AgentRunner {
         self
     }
     
-    /// Add multiple runners at once
-    pub fn add_runners(mut self, runners: Vec<Box<dyn Runner>>) -> Self {
-        self.runners.extend(runners);
-        self
-    }
-    
     /// Add analyzer that will be applied to the merged stream
     pub fn add_global_analyzer(mut self, analyzer: Box<dyn Analyzer>) -> Self {
         self.analyzers.push(analyzer);

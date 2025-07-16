@@ -4,9 +4,39 @@ use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
+
+// Global metrics storage for HTTP filter
+static HTTP_FILTER_GLOBAL_METRICS: std::sync::OnceLock<Arc<Mutex<FilterMetrics>>> = std::sync::OnceLock::new();
+
+/// Print global HTTP filter metrics
+pub fn print_global_http_filter_metrics() {
+    if let Some(metrics_ref) = HTTP_FILTER_GLOBAL_METRICS.get() {
+        if let Ok(metrics) = metrics_ref.lock() {
+            println!("[HTTPFilter Global Metrics] Total: {}, Filtered: {}, Passed: {}", 
+                     metrics.total_events_processed, 
+                     metrics.filtered_events_count, 
+                     metrics.passed_events_count);
+        }
+    } else {
+        println!("[HTTPFilter Global Metrics] No metrics available");
+    }
+}
+
+/// Update global metrics with current filter metrics
+fn update_global_metrics(total: u64, filtered: u64, passed: u64) {
+    if let Some(metrics_ref) = HTTP_FILTER_GLOBAL_METRICS.get() {
+        if let Ok(mut metrics) = metrics_ref.lock() {
+            metrics.total_events_processed = total;
+            metrics.filtered_events_count = filtered;
+            metrics.passed_events_count = passed;
+        }
+    }
+}
 
 /// HTTP Filter Analyzer that filters HTTP parser events based on configurable expressions
 /// Similar to Python filter_expression.py but integrated into the Rust framework
+#[derive(Debug)]
 pub struct HTTPFilter {
     name: String,
     /// Filter expressions to exclude events
@@ -51,6 +81,13 @@ pub enum FilterNode {
 impl HTTPFilter {
     /// Create a new HTTP filter with no patterns (passes everything through)
     pub fn new() -> Self {
+        // Initialize global metrics if not already done
+        let _ = HTTP_FILTER_GLOBAL_METRICS.set(Arc::new(Mutex::new(FilterMetrics {
+            total_events_processed: 0,
+            filtered_events_count: 0,
+            passed_events_count: 0,
+        })));
+        
         HTTPFilter {
             name: "HTTPFilter".to_string(),
             exclude_patterns: Vec::new(),
@@ -451,10 +488,20 @@ impl Analyzer for HTTPFilter {
                 if should_filter {
                     // Increment filtered counter
                     filtered_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Update global metrics
+                    let total = total_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let filtered = filtered_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let passed = passed_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    update_global_metrics(total, filtered, passed);
                     None // Filter out
                 } else {
                     // Increment passed counter  
                     passed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Update global metrics
+                    let total = total_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let filtered = filtered_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let passed = passed_counter.load(std::sync::atomic::Ordering::Relaxed);
+                    update_global_metrics(total, filtered, passed);
                     Some(event) // Pass through
                 }
             }
