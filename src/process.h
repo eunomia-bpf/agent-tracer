@@ -27,6 +27,7 @@ struct event {
 	int ppid;
 	unsigned exit_code;
 	unsigned long long duration_ns;
+	unsigned long long timestamp_ns;
 	char comm[TASK_COMM_LEN];
 	union {
 		char filename[MAX_FILENAME_LEN];     /* for process events */

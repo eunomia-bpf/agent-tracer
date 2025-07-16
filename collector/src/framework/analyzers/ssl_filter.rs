@@ -1,6 +1,5 @@
 use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
-use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use serde_json::Value;
@@ -71,91 +70,12 @@ impl SSLFilter {
         filter
     }
 
-    /// Check if an SSL event should be filtered out
-    fn should_filter_event(&self, event: &Event) -> bool {
-        if self.filters.is_empty() {
-            return false;
-        }
 
-        // Only filter ssl events
-        if event.source != "ssl" {
-            return false;
-        }
 
-        let data = &event.data;
 
-        // Evaluate each filter expression
-        for filter in &self.filters {
-            if filter.evaluate(data) {
-                if self.debug {
-                    eprintln!("[SSLFilter DEBUG] Event filtered by: {}", filter.expression);
-                }
-                return true;
-            }
-        }
 
-        false
-    }
-
-    /// Get filtering metrics
-    pub fn get_metrics(&self) -> FilterMetrics {
-        FilterMetrics {
-            total_events_processed: self.total_events_processed.load(std::sync::atomic::Ordering::Relaxed),
-            filtered_events_count: self.filtered_events_count.load(std::sync::atomic::Ordering::Relaxed),
-            passed_events_count: self.passed_events_count.load(std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-
-    /// Reset metrics counters
-    pub fn reset_metrics(&self) {
-        self.total_events_processed.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.filtered_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.passed_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Print current metrics to stderr
-    pub fn print_metrics(&self) {
-        let metrics = self.get_metrics();
-        eprintln!("[SSLFilter Metrics] Total: {}, Filtered: {}, Passed: {}", 
-                  metrics.total_events_processed, 
-                  metrics.filtered_events_count, 
-                  metrics.passed_events_count);
-    }
-
-    /// Enable debug mode
-    pub fn with_debug(mut self) -> Self {
-        self.debug = true;
-        self
-    }
 }
 
-/// Metrics for SSL filtering
-#[derive(Debug, Clone)]
-pub struct FilterMetrics {
-    pub total_events_processed: u64,
-    pub filtered_events_count: u64,
-    pub passed_events_count: u64,
-}
-
-impl FilterMetrics {
-    /// Calculate the filter rate as a percentage
-    pub fn filter_rate(&self) -> f64 {
-        if self.total_events_processed == 0 {
-            0.0
-        } else {
-            (self.filtered_events_count as f64 / self.total_events_processed as f64) * 100.0
-        }
-    }
-
-    /// Calculate the pass rate as a percentage
-    pub fn pass_rate(&self) -> f64 {
-        if self.total_events_processed == 0 {
-            0.0
-        } else {
-            (self.passed_events_count as f64 / self.total_events_processed as f64) * 100.0
-        }
-    }
-}
 
 impl FilterExpression {
     /// Parse a filter expression string
@@ -564,28 +484,6 @@ mod tests {
         assert!(!filter.evaluate(&no_match));
     }
 
-    #[test]
-    fn test_ssl_filter_metrics() {
-        let filter = SSLFilter::with_patterns(vec!["len<10".to_string()]);
-        
-        // Check initial metrics
-        let initial_metrics = filter.get_metrics();
-        assert_eq!(initial_metrics.total_events_processed, 0);
-        assert_eq!(initial_metrics.filtered_events_count, 0);
-        assert_eq!(initial_metrics.passed_events_count, 0);
-        assert_eq!(initial_metrics.filter_rate(), 0.0);
-        assert_eq!(initial_metrics.pass_rate(), 0.0);
-        
-        // Test metrics calculation
-        let metrics = FilterMetrics {
-            total_events_processed: 100,
-            filtered_events_count: 30,
-            passed_events_count: 70,
-        };
-        
-        assert_eq!(metrics.filter_rate(), 30.0);
-        assert_eq!(metrics.pass_rate(), 70.0);
-    }
 
     #[test]
     fn test_escape_sequence_processing() {

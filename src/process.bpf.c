@@ -145,6 +145,7 @@ int BPF_URETPROBE(bash_readline, const void *ret)
 	e->ppid = 0; /* Not relevant for bash commands */
 	e->exit_code = 0;
 	e->duration_ns = 0;
+	e->timestamp_ns = bpf_ktime_get_ns();
 	e->exit_event = false;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	bpf_probe_read_user_str(&e->command, sizeof(e->command), ret);
@@ -210,6 +211,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 	e->exit_event = false;
 	e->pid = pid;
 	e->ppid = BPF_CORE_READ(task, real_parent, tgid);
+	e->timestamp_ns = ts;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
 	fname_off = ctx->__data_loc_filename & 0xFFFF;
@@ -246,8 +248,9 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 
 	/* if we recorded start of the process, calculate lifetime duration */
 	start_ts = bpf_map_lookup_elem(&exec_start, &pid);
+	ts = bpf_ktime_get_ns();
 	if (start_ts)
-		duration_ns = bpf_ktime_get_ns() - *start_ts;
+		duration_ns = ts - *start_ts;
 	else if (min_duration_ns)
 		return 0;
 	bpf_map_delete_elem(&exec_start, &pid);
@@ -269,6 +272,7 @@ int handle_exit(struct trace_event_raw_sched_process_template* ctx)
 	e->duration_ns = duration_ns;
 	e->pid = pid;
 	e->ppid = BPF_CORE_READ(task, real_parent, tgid);
+	e->timestamp_ns = ts;
 	e->exit_code = (BPF_CORE_READ(task, exit_code) >> 8) & 0xff;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
@@ -327,6 +331,7 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
 	e->ppid = 0; /* Will be filled if needed */
 	e->exit_code = 0;
 	e->duration_ns = 0;
+	e->timestamp_ns = bpf_ktime_get_ns();
 	e->exit_event = false;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	
@@ -376,6 +381,7 @@ int trace_open(struct trace_event_raw_sys_enter *ctx)
 	e->ppid = 0;
 	e->exit_code = 0;
 	e->duration_ns = 0;
+	e->timestamp_ns = bpf_ktime_get_ns();
 	e->exit_event = false;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	

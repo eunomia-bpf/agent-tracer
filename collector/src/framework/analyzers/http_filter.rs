@@ -1,6 +1,5 @@
 use super::{Analyzer, AnalyzerError};
 use crate::framework::runners::EventStream;
-use crate::framework::core::Event;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use serde_json::Value;
@@ -110,62 +109,10 @@ impl HTTPFilter {
     }
 
 
-    /// Check if an HTTP parser event should be filtered out
-    fn should_filter_event(&self, event: &Event) -> bool {
-        if self.filters.is_empty() {
-            return false;
-        }
 
-        let data = &event.data;
-        
-        // Only filter http_parser events
-        if event.source != "http_parser" {
-            return false;
-        }
 
-        // Evaluate each filter expression
-        for filter in &self.filters {
-            if filter.evaluate(data) {
-                if self.debug {
-                    eprintln!("[HTTPFilter DEBUG] Event filtered by: {}", filter.expression);
-                }
-                return true;
-            }
-        }
 
-        false
-    }
 
-    /// Get filtering metrics
-    pub fn get_metrics(&self) -> FilterMetrics {
-        FilterMetrics {
-            total_events_processed: self.total_events_processed.load(std::sync::atomic::Ordering::Relaxed),
-            filtered_events_count: self.filtered_events_count.load(std::sync::atomic::Ordering::Relaxed),
-            passed_events_count: self.passed_events_count.load(std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-
-    /// Reset metrics counters
-    pub fn reset_metrics(&self) {
-        self.total_events_processed.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.filtered_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.passed_events_count.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Print current metrics to stderr
-    pub fn print_metrics(&self) {
-        let metrics = self.get_metrics();
-        eprintln!("[HTTPFilter Metrics] Total: {}, Filtered: {}, Passed: {}", 
-                  metrics.total_events_processed, 
-                  metrics.filtered_events_count, 
-                  metrics.passed_events_count);
-    }
-
-    /// Enable debug mode
-    pub fn with_debug(mut self) -> Self {
-        self.debug = true;
-        self
-    }
 }
 
 /// Metrics for HTTP filtering
@@ -177,23 +124,6 @@ pub struct FilterMetrics {
 }
 
 impl FilterMetrics {
-    /// Calculate the filter rate as a percentage
-    pub fn filter_rate(&self) -> f64 {
-        if self.total_events_processed == 0 {
-            0.0
-        } else {
-            (self.filtered_events_count as f64 / self.total_events_processed as f64) * 100.0
-        }
-    }
-
-    /// Calculate the pass rate as a percentage
-    pub fn pass_rate(&self) -> f64 {
-        if self.total_events_processed == 0 {
-            0.0
-        } else {
-            (self.passed_events_count as f64 / self.total_events_processed as f64) * 100.0
-        }
-    }
 }
 
 impl FilterExpression {
@@ -606,36 +536,4 @@ mod tests {
         assert!(!filter.evaluate(&post_request));
     }
 
-    #[test]
-    fn test_http_filter_metrics() {
-        let filter = HTTPFilter::with_patterns(vec!["request.method=GET".to_string()]);
-        
-        // Check initial metrics
-        let initial_metrics = filter.get_metrics();
-        assert_eq!(initial_metrics.total_events_processed, 0);
-        assert_eq!(initial_metrics.filtered_events_count, 0);
-        assert_eq!(initial_metrics.passed_events_count, 0);
-        assert_eq!(initial_metrics.filter_rate(), 0.0);
-        assert_eq!(initial_metrics.pass_rate(), 0.0);
-        
-        // Test metrics calculation
-        let metrics = FilterMetrics {
-            total_events_processed: 100,
-            filtered_events_count: 25,
-            passed_events_count: 75,
-        };
-        
-        assert_eq!(metrics.filter_rate(), 25.0);
-        assert_eq!(metrics.pass_rate(), 75.0);
-        
-        // Test edge case - no events processed
-        let empty_metrics = FilterMetrics {
-            total_events_processed: 0,
-            filtered_events_count: 0,
-            passed_events_count: 0,
-        };
-        
-        assert_eq!(empty_metrics.filter_rate(), 0.0);
-        assert_eq!(empty_metrics.pass_rate(), 0.0);
-    }
 }
