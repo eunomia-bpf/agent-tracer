@@ -78,7 +78,7 @@ enum Commands {
     /// Combined SSL and Process monitoring with configurable options
     Agent {
         /// Enable SSL monitoring
-        #[arg(long, default_value = "true")]
+        #[arg(long, action = clap::ArgAction::Set, default_value = "true")]
         ssl: bool,
         /// SSL filter by UID
         #[arg(long)]
@@ -90,14 +90,14 @@ enum Commands {
         #[arg(long)]
         ssl_handshake: bool,
         /// Enable HTTP parsing for SSL
-        #[arg(long, default_value = "true")]
+        #[arg(long, action = clap::ArgAction::Set, default_value = "true")]
         ssl_http: bool,
         /// Include raw SSL data in HTTP parser events
         #[arg(long)]
         ssl_raw_data: bool,
         
         /// Enable process monitoring
-        #[arg(long, default_value = "true")]
+        #[arg(long, action = clap::ArgAction::Set, default_value = "true")]
         process: bool,
         /// Process command filter (comma-separated list)
         #[arg(short = 'c', long)]
@@ -126,6 +126,11 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize env_logger with default log level of info
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+    
     let cli = Cli::parse();
     
     // Setup signal handler for graceful shutdown

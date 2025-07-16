@@ -107,7 +107,7 @@ cd collector && cargo build --release
 A: Agent Tracer operates at the kernel level using eBPF, providing tamper-resistant monitoring that agents cannot easily bypass or manipulate. Traditional APM requires instrumentation that can be compromised.
 
 **Q: Does Agent Tracer impact application performance?**  
-A: Minimal impact (<3% CPU overhead). eBPF runs in kernel space with optimized data collection, avoiding the overhead of userspace monitoring.
+A: Minimal impact (<1% CPU overhead). eBPF runs in kernel space with optimized data collection, avoiding the overhead of userspace monitoring.
 
 **Q: Can agents detect they're being monitored?**  
 A: Detection is extremely difficult since monitoring occurs at the kernel level without modifying application code or injecting libraries.
@@ -118,13 +118,7 @@ A: Detection is extremely difficult since monitoring occurs at the kernel level 
 A: Any distribution with kernel 4.1+ and eBPF support. Tested on Ubuntu 20.04+, CentOS 8+, RHEL 8+, and Amazon Linux 2.
 
 **Q: Can I monitor multiple agents simultaneously?**  
-A: Yes, use the `agent` or `combined` modes to monitor multiple processes concurrently with automatic event correlation.
-
-**Q: How is sensitive data handled?**  
-A: SSL payload capture is configurable. Enable data redaction in analyzers for production environments. See Security Considerations below.
-
-**Q: What about containers and Kubernetes?**  
-A: Agent Tracer works in containerized environments. Deploy as a DaemonSet for cluster-wide monitoring with appropriate privileges.
+A: Yes, use the `agent`  modes to monitor multiple processes concurrently with automatic event correlation.
 
 ### Troubleshooting
 
@@ -133,7 +127,6 @@ A: Ensure you're running with `sudo` or have `CAP_BPF` and `CAP_SYS_ADMIN` capab
 
 **Q: "Failed to load eBPF program" errors**  
 A: Check kernel version (`uname -r`) and eBPF support (`zgrep BPF /proc/config.gz`). Update vmlinux.h if needed.
-
 
 ## Use cases
 

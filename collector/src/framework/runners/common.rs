@@ -34,7 +34,12 @@ impl BinaryExecutor {
 
     /// Execute binary and get raw JSON stream
     pub async fn get_json_stream(&self) -> Result<JsonStream, RunnerError> {
-        debug!("Starting binary for JSON stream: {}", self.binary_path);
+        // Log the actual exec command with all arguments
+        if self.additional_args.is_empty() {
+            log::info!("Executing binary: {}", self.binary_path);
+        } else {
+            log::info!("Executing binary: {} {}", self.binary_path, self.additional_args.join(" "));
+        }
         
         let mut cmd = TokioCommand::new(&self.binary_path);
         cmd.stdout(Stdio::piped())
