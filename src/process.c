@@ -23,6 +23,10 @@ struct file_hash_entry {
     uint64_t hash;
     uint64_t timestamp_ns;
     uint32_t count;
+    pid_t pid;
+    char comm[TASK_COMM_LEN];
+    char filepath[MAX_FILENAME_LEN];
+    int flags;
 };
 
 static struct file_hash_entry file_hashes[MAX_FILE_HASHES];
@@ -186,21 +190,6 @@ static void print_file_open_event(const struct event *e, uint64_t timestamp_ns, 
 	printf("}\n");
 }
 
-// Shared function to print aggregated FILE_OPEN events (for expired/process exit)
-static void print_aggregated_file_open(uint64_t timestamp_ns, uint32_t count, pid_t pid, const char *extra_fields)
-{
-	printf("{");
-	printf("\"timestamp\":%llu,", timestamp_ns);
-	printf("\"event\":\"FILE_OPEN\",");
-	printf("\"pid\":%d,", pid);
-	printf("\"count\":%u", count);
-	
-	if (extra_fields && strlen(extra_fields) > 0) {
-		printf(",%s", extra_fields);
-	}
-	
-	printf("}\n");
-}
 
 // Hash function for FILE_OPEN events
 static uint64_t hash_file_open(const struct event *e)
@@ -235,7 +224,25 @@ static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns
 					fprintf(stderr, "DEBUG: Aggregation window expired for FILE_OPEN, count=%u\n", 
 						file_hashes[i].count);
 				}
-				print_aggregated_file_open(timestamp_ns, file_hashes[i].count, 0, "\"window_expired\":true");
+				// Create fake event structure for aggregated output
+				struct event fake_event = {
+					.type = EVENT_TYPE_FILE_OPERATION,
+					.pid = file_hashes[i].pid,
+					.ppid = 0,
+					.exit_code = 0,
+					.duration_ns = 0,
+					.exit_event = false,
+					.file_op = {
+						.fd = -1,
+						.flags = file_hashes[i].flags,
+						.is_open = true
+					}
+				};
+				strncpy(fake_event.comm, file_hashes[i].comm, TASK_COMM_LEN - 1);
+				fake_event.comm[TASK_COMM_LEN - 1] = '\0';
+				strncpy(fake_event.file_op.filepath, file_hashes[i].filepath, MAX_FILENAME_LEN - 1);
+				fake_event.file_op.filepath[MAX_FILENAME_LEN - 1] = '\0';
+				print_file_open_event(&fake_event, timestamp_ns, file_hashes[i].count, "\"window_expired\":true");
 			}
 			
 			// Remove expired entry
@@ -263,6 +270,12 @@ static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns
 		file_hashes[hash_count].hash = hash;
 		file_hashes[hash_count].timestamp_ns = timestamp_ns;
 		file_hashes[hash_count].count = 1;
+		file_hashes[hash_count].pid = e->pid;
+		strncpy(file_hashes[hash_count].comm, e->comm, TASK_COMM_LEN - 1);
+		file_hashes[hash_count].comm[TASK_COMM_LEN - 1] = '\0';
+		strncpy(file_hashes[hash_count].filepath, e->file_op.filepath, MAX_FILENAME_LEN - 1);
+		file_hashes[hash_count].filepath[MAX_FILENAME_LEN - 1] = '\0';
+		file_hashes[hash_count].flags = e->file_op.flags;
 		hash_count++;
 		if (env.verbose) {
 			fprintf(stderr, "DEBUG: Created new aggregation entry for FILE_OPEN, PID %d (total entries: %d)\n", 
@@ -270,6 +283,8 @@ static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns
 		}
 	} else if (env.verbose) {
 		fprintf(stderr, "DEBUG: Max aggregation entries reached (%d), cannot track more\n", MAX_FILE_HASHES);
+		// just print the event
+		print_file_open_event(e, timestamp_ns, 1, NULL);
 	}
 	
 	return 1;  // Return count of 1 for first occurrence
@@ -280,23 +295,50 @@ static void flush_pid_file_opens(pid_t pid, uint64_t timestamp_ns)
 {
 	int flushed_count = 0;
 	for (int i = 0; i < hash_count; i++) {
-		if (file_hashes[i].count > 1) {
+		if (file_hashes[i].pid == pid && file_hashes[i].count > 1) {
 			if (env.verbose) {
 				fprintf(stderr, "DEBUG: Flushing FILE_OPEN aggregation on process exit, PID %d, count=%u\n", 
 					pid, file_hashes[i].count);
 			}
-			print_aggregated_file_open(timestamp_ns, file_hashes[i].count, pid, "\"reason\":\"process_exit\"");
+			// Create fake event structure for aggregated output
+			struct event fake_event = {
+				.type = EVENT_TYPE_FILE_OPERATION,
+				.pid = file_hashes[i].pid,
+				.ppid = 0,
+				.exit_code = 0,
+				.duration_ns = 0,
+				.exit_event = false,
+				.file_op = {
+					.fd = -1,
+					.flags = file_hashes[i].flags,
+					.is_open = true
+				}
+			};
+			strncpy(fake_event.comm, file_hashes[i].comm, TASK_COMM_LEN - 1);
+			fake_event.comm[TASK_COMM_LEN - 1] = '\0';
+			strncpy(fake_event.file_op.filepath, file_hashes[i].filepath, MAX_FILENAME_LEN - 1);
+			fake_event.file_op.filepath[MAX_FILENAME_LEN - 1] = '\0';
+			print_file_open_event(&fake_event, timestamp_ns, file_hashes[i].count, "\"reason\":\"process_exit\"");
 			flushed_count++;
 		}
 	}
 	
-	if (env.verbose && hash_count > 0) {
-		fprintf(stderr, "DEBUG: Cleared %d FILE_OPEN aggregation entries for PID %d (flushed %d)\n", 
-			hash_count, pid, flushed_count);
+	// Remove all entries for this PID
+	int removed_count = 0;
+	for (int i = 0; i < hash_count; i++) {
+		if (file_hashes[i].pid == pid) {
+			// Remove this entry by moving last entry to this position
+			file_hashes[i] = file_hashes[hash_count - 1];
+			hash_count--;
+			removed_count++;
+			i--; // Recheck this position since we moved an entry here
+		}
 	}
 	
-	// Clear all entries for this PID
-	hash_count = 0;
+	if (env.verbose && removed_count > 0) {
+		fprintf(stderr, "DEBUG: Cleared %d FILE_OPEN aggregation entries for PID %d (flushed %d)\n", 
+			removed_count, pid, flushed_count);
+	}
 }
 
 static void sig_handler(int sig)

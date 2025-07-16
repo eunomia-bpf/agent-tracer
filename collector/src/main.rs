@@ -223,6 +223,9 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
     if !quiet {
         process_runner = process_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
     }
+
+    process_runner = process_runner
+        .add_analyzer(Box::new(FileLogger::new("process.log").unwrap()));
     
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;

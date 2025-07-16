@@ -205,6 +205,38 @@ Both tools utilize the same architectural pattern:
 
 Both tools output JSON-formatted events to stdout, with debug information sent to stderr when verbose mode is enabled.
 
+### JSON Schema
+
+All events follow a common base schema with event-specific fields:
+
+**Base Event Fields:**
+- `timestamp`: Unix timestamp in nanoseconds (uint64)
+- `event`: Event type string (EXEC, EXIT, FILE_OPEN, BASH_READLINE, SSL_READ, SSL_WRITE, SSL_HANDSHAKE)
+- `comm`: Process command name (string, max 16 chars)
+- `pid`: Process ID (int32)
+
+**Process Event Fields:**
+- `ppid`: Parent process ID (int32)
+- `filename`: Executable path (string, EXEC events only)
+- `exit_code`: Process exit code (uint32, EXIT events only)
+- `duration_ms`: Process lifetime in milliseconds (uint64, EXIT events only)
+
+**File Open Event Fields:**
+- `count`: Number of aggregated file opens (uint32)
+- `filepath`: Full path to the file being opened (string, max 256 chars)
+- `flags`: File open flags (int32)
+- `window_expired`: Present when aggregation window expires (boolean, optional)
+- `reason`: Why aggregation was flushed (string, optional: "process_exit")
+
+**Bash Readline Event Fields:**
+- `command`: Command line entered (string, max 256 chars)
+
+**SSL Event Fields:**
+- `uid`: User ID of the process (uint32)
+- `data`: SSL traffic data (string, max 32KB)
+- `data_len`: Length of data captured (uint32)
+- `truncated`: Whether data was truncated due to size limits (boolean)
+
 ### Process Tracer JSON Events
 
 **Process Events:**
@@ -244,9 +276,23 @@ Both tools output JSON-formatted events to stdout, with debug information sent t
 {
   "timestamp": 1234567890123456789,
   "event": "FILE_OPEN",
+  "comm": "python3",
   "pid": 1234,
   "count": 5,
+  "filepath": "/etc/passwd",
+  "flags": 0,
   "window_expired": true
+}
+
+{
+  "timestamp": 1234567890123456789,
+  "event": "FILE_OPEN",
+  "comm": "python3",
+  "pid": 1234,
+  "count": 3,
+  "filepath": "/tmp/tempfile.txt",
+  "flags": 577,
+  "reason": "process_exit"
 }
 ```
 
