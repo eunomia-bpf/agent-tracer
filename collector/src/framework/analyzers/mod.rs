@@ -30,7 +30,7 @@ pub use output::OutputAnalyzer;
 pub use file_logger::FileLogger;
 pub use sse_processor::SSEProcessor;
 pub use http_parser::HTTPParser;
-pub use http_filter::HTTPFilter;
+pub use http_filter::{HTTPFilter, print_global_http_filter_metrics};
 pub use ssl_filter::SSLFilter;
 
 #[cfg(test)]

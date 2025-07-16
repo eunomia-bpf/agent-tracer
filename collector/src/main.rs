@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal;
 
@@ -9,11 +8,9 @@ mod framework;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, AgentRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter}
+    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter, print_global_http_filter_metrics}
 };
 
-// Global reference to HTTP filter for metrics printing
-static HTTP_FILTER_METRICS: std::sync::OnceLock<Arc<Mutex<Option<HTTPFilter>>>> = std::sync::OnceLock::new();
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn convert_runner_error(e: RunnerError) -> Box<dyn std::error::Error> {
@@ -28,15 +25,8 @@ async fn setup_signal_handler() {
         sigint.recv().await;
         println!("\n\nReceived SIGINT, shutting down...");
         
-        // Print HTTP filter metrics if available
-        if let Some(http_filter_ref) = HTTP_FILTER_METRICS.get() {
-            if let Ok(filter_guard) = http_filter_ref.lock() {
-                if let Some(ref filter) = *filter_guard {
-                    println!("=== HTTP Filter Metrics ===");
-                    filter.print_metrics();
-                }
-            }
-        }
+        // Print HTTP filter metrics using the global function
+        print_global_http_filter_metrics();
         
         SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
         std::process::exit(0);
@@ -90,15 +80,9 @@ enum Commands {
         /// Enable SSL monitoring
         #[arg(long, default_value = "true")]
         ssl: bool,
-        /// SSL filter by PID
-        #[arg(long)]
-        ssl_pid: Option<u32>,
         /// SSL filter by UID
         #[arg(long)]
         ssl_uid: Option<u32>,
-        /// SSL filter by command name
-        #[arg(long)]
-        ssl_comm: Option<String>,
         /// SSL filter patterns (for analyzer-level filtering)
         #[arg(long)]
         ssl_filter: Vec<String>,
@@ -147,16 +131,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup signal handler for graceful shutdown
     setup_signal_handler().await;
     
-    // Initialize HTTP filter metrics storage
-    HTTP_FILTER_METRICS.set(Arc::new(Mutex::new(None))).unwrap();
-    
     // Create BinaryExtractor with embedded binaries
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
         Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
-        Commands::Agent { ssl, ssl_pid, ssl_uid, ssl_comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, comm, pid, duration, mode, http_filter, output, quiet } => run_agent(&binary_extractor, *ssl, *ssl_pid, *ssl_uid, ssl_comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, comm.as_deref(), *pid, *duration, *mode, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
+        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, output, quiet } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
@@ -258,16 +239,14 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
 async fn run_agent(
     binary_extractor: &BinaryExtractor,
     ssl_enabled: bool,
-    ssl_pid: Option<u32>,
+    pid: Option<u32>,
     ssl_uid: Option<u32>,
-    ssl_comm: Option<&str>,
+    comm: Option<&str>,
     ssl_filter: &[String],
     ssl_handshake: bool,
     ssl_http: bool,
     ssl_raw_data: bool,
     process_enabled: bool,
-    comm: Option<&str>,
-    _pid: Option<u32>,
     duration: Option<u32>,
     mode: Option<u32>,
     http_filter: &[String],
@@ -285,13 +264,13 @@ async fn run_agent(
         
         // Configure SSL runner arguments (sslsniff supports -p, -u, -c, -h, -v)
         let mut ssl_args = Vec::new();
-        if let Some(pid_filter) = ssl_pid {
+        if let Some(pid_filter) = pid {
             ssl_args.extend(["-p".to_string(), pid_filter.to_string()]);
         }
         if let Some(uid_filter) = ssl_uid {
             ssl_args.extend(["-u".to_string(), uid_filter.to_string()]);
         }
-        if let Some(comm_filter) = ssl_comm {
+        if let Some(comm_filter) = comm {
             ssl_args.extend(["-c".to_string(), comm_filter.to_string()]);
         }
         if ssl_handshake {

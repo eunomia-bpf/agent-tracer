@@ -347,17 +347,8 @@ int main(int argc, char **argv)
 	}
 	
 	/* Output configuration as JSON */
-	printf("{\"type\":\"config\",\"filter_mode\":%d,\"min_duration_ms\":%ld,\"commands\":[", 
-	       env.filter_mode, env.min_duration_ms);
-	for (int i = 0; i < env.command_count; i++) {
-		printf("\"%s\"%s", env.command_list[i], 
-		       (i < env.command_count - 1) ? "," : "");
-	}
-	printf("],\"initial_tracked_pids\":[");
-	for (int i = 0; i < tracked_count && i < MAX_TRACKED_PIDS; i++) {
-		printf("%d%s", tracked_pids_array[i], (i < tracked_count - 1) ? "," : "");
-	}
-	printf("]}\n");
+	printf("Config: filter_mode=%d, min_duration_ms=%ld, commands=%d, initial_tracked_pids=%d\n", 
+	       env.filter_mode, env.min_duration_ms, env.command_count, tracked_count);
 
 	/* Attach tracepoints */
 	err = process_bpf__attach(skel);
