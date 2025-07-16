@@ -16,6 +16,7 @@ pub type JsonStream = Pin<Box<dyn Stream<Item = serde_json::Value> + Send>>;
 pub struct BinaryExecutor {
     binary_path: String,
     additional_args: Vec<String>,
+    runner_name: Option<String>,
 }
 
 impl BinaryExecutor {
@@ -23,12 +24,19 @@ impl BinaryExecutor {
         Self { 
             binary_path,
             additional_args: Vec::new(),
+            runner_name: None,
         }
     }
 
     /// Add additional command-line arguments
     pub fn with_args(mut self, args: &[String]) -> Self {
         self.additional_args = args.to_vec();
+        self
+    }
+
+    /// Set runner name for debugging purposes
+    pub fn with_runner_name(mut self, name: String) -> Self {
+        self.runner_name = Some(name);
         self
     }
 
@@ -66,6 +74,10 @@ impl BinaryExecutor {
         if let Some(pid) = child.id() {
             debug!("Binary started with PID: Some({})", pid);
         }
+        
+        // Clone needed data for the stream
+        let runner_name = self.runner_name.clone();
+        let binary_path = self.binary_path.clone();
         
         let stream = async_stream::stream! {
             let mut reader = BufReader::new(stdout);
@@ -128,7 +140,36 @@ impl BinaryExecutor {
                     Err(e) => {
                         // Handle UTF-8 errors gracefully - don't terminate, just warn and continue
                         if e.kind() == std::io::ErrorKind::InvalidData {
-                            log::warn!("Invalid UTF-8 data from binary at line {}, skipping line", line_count + 1);
+                            let runner_info = runner_name.as_ref()
+                                .map(|name| format!("[{}] ", name))
+                                .unwrap_or_else(|| format!("[{}] ", 
+                                    std::path::Path::new(&binary_path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("unknown")
+                                ));
+                            
+                            // Try to extract some bytes from the error for debugging
+                            let error_context = if let Some(inner_error) = e.get_ref() {
+                                if let Some(utf8_error) = inner_error.downcast_ref::<std::str::Utf8Error>() {
+                                    let valid_up_to = utf8_error.valid_up_to();
+                                    let error_bytes = &line.as_bytes()[valid_up_to..];
+                                    let hex_dump = error_bytes.iter()
+                                        .take(16) // Show first 16 bytes
+                                        .map(|b| format!("{:02x}", b))
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    format!(" (invalid bytes at position {}: {})", valid_up_to, hex_dump)
+                                } else {
+                                    String::new()
+                                }
+                            } else {
+                                String::new()
+                            };
+                            
+                            log::warn!("{}Invalid UTF-8 data from binary at line {}, skipping line{}", 
+                                runner_info, line_count + 1, error_context);
+                            
                             // Try to read the next line 
                             continue;
                         } else {

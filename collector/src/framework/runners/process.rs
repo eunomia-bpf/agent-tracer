@@ -21,7 +21,7 @@ impl ProcessRunner {
         Self {
             config: ProcessConfig::default(),
             analyzers: Vec::new(),
-            executor: BinaryExecutor::new(path_str),
+            executor: BinaryExecutor::new(path_str).with_runner_name("Process".to_string()),
             additional_args: Vec::new(),
         }
     }
@@ -35,7 +35,7 @@ impl ProcessRunner {
     {
         self.additional_args = args.into_iter().map(|s| s.as_ref().to_string()).collect();
         // Update the executor with the additional args
-        self.executor = self.executor.with_args(&self.additional_args);
+        self.executor = self.executor.with_args(&self.additional_args).with_runner_name("Process".to_string());
         self
     }
 
