@@ -243,6 +243,10 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 		if (timestamp_ns - file_hashes[i].timestamp_ns > FILE_DEDUP_WINDOW_NS) {
 			// Print aggregated result if count > 1
 			if (file_hashes[i].count > 1) {
+				if (env.verbose) {
+					fprintf(stderr, "DEBUG: Aggregation window expired for %s, count=%u\n", 
+						file_hashes[i].is_open ? "FILE_OPEN" : "FILE_CLOSE", file_hashes[i].count);
+				}
 				print_aggregated_file_event(timestamp_ns, file_hashes[i].count, 0, file_hashes[i].is_open, "\"window_expired\":true");
 			}
 			
@@ -258,6 +262,10 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 		if (file_hashes[i].hash == hash) {
 			file_hashes[i].count++;
 			file_hashes[i].timestamp_ns = timestamp_ns;
+			if (env.verbose) {
+				fprintf(stderr, "DEBUG: Aggregating %s for PID %d, count now %u\n", 
+					e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE", e->pid, file_hashes[i].count);
+			}
 			return 0;  // Return 0 to indicate this should be skipped (duplicate)
 		}
 	}
@@ -269,6 +277,12 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 		file_hashes[hash_count].count = 1;
 		file_hashes[hash_count].is_open = e->file_op.is_open;
 		hash_count++;
+		if (env.verbose) {
+			fprintf(stderr, "DEBUG: Created new aggregation entry for %s, PID %d (total entries: %d)\n", 
+				e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE", e->pid, hash_count);
+		}
+	} else if (env.verbose) {
+		fprintf(stderr, "DEBUG: Max aggregation entries reached (%d), cannot track more\n", MAX_FILE_HASHES);
 	}
 	
 	return 1;  // Return count of 1 for first occurrence
@@ -277,10 +291,21 @@ static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
 // Flush all pending aggregations for a specific PID
 static void flush_pid_file_ops(pid_t pid, uint64_t timestamp_ns)
 {
+	int flushed_count = 0;
 	for (int i = 0; i < hash_count; i++) {
 		if (file_hashes[i].count > 1) {
+			if (env.verbose) {
+				fprintf(stderr, "DEBUG: Flushing %s aggregation on process exit, PID %d, count=%u\n", 
+					file_hashes[i].is_open ? "FILE_OPEN" : "FILE_CLOSE", pid, file_hashes[i].count);
+			}
 			print_aggregated_file_event(timestamp_ns, file_hashes[i].count, pid, file_hashes[i].is_open, "\"reason\":\"process_exit\"");
+			flushed_count++;
 		}
+	}
+	
+	if (env.verbose && hash_count > 0) {
+		fprintf(stderr, "DEBUG: Cleared %d aggregation entries for PID %d (flushed %d)\n", 
+			hash_count, pid, flushed_count);
 	}
 	
 	// Clear all entries for this PID
