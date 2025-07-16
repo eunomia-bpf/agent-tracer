@@ -7,11 +7,27 @@
 #include <sys/resource.h>
 #include <bpf/libbpf.h>
 #include <dirent.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
 #include "process.h"
 #include "process.skel.h"
 #include "process_utils.h"
 
 #define MAX_COMMAND_LIST 256
+#define FILE_DEDUP_WINDOW_NS 60000000000ULL  // 60 seconds in nanoseconds
+#define MAX_FILE_HASHES 1024
+
+// Simple hash table for file operation deduplication
+struct file_hash_entry {
+    uint64_t hash;
+    uint64_t timestamp_ns;
+    uint32_t count;
+    bool is_open;  // Track whether this is FILE_OPEN or FILE_CLOSE
+};
+
+static struct file_hash_entry file_hashes[MAX_FILE_HASHES];
+static int hash_count = 0;
 
 static struct env {
 	bool verbose;
@@ -19,11 +35,13 @@ static struct env {
 	char *command_list[MAX_COMMAND_LIST];
 	int command_count;
 	enum filter_mode filter_mode;
+	pid_t pid;
 } env = {
 	.verbose = false,
 	.min_duration_ms = 0,
 	.command_count = 0,
-	.filter_mode = FILTER_MODE_PROC
+	.filter_mode = FILTER_MODE_PROC,
+	.pid = 0
 };
 
 const char *argp_program_version = "process-tracer 1.0";
@@ -34,7 +52,7 @@ const char argp_program_doc[] =
 "It traces process start and exits with configurable filtering levels.\n"
 "Shows associated information (filename, process duration, PID and PPID, etc).\n"
 "\n"
-"USAGE: ./process [-d <min-duration-ms>] [-c <command1,command2,...>] [-m <mode>] [-v]\n"
+"USAGE: ./process [-d <min-duration-ms>] [-c <command1,command2,...>] [-p <pid>] [-m <mode>] [-v]\n"
 "\n"
 "FILTER MODES:\n"
 "  0 (all):    Trace all processes and all read/write operations\n"
@@ -45,12 +63,14 @@ const char argp_program_doc[] =
 "  ./process -m 0                   # Trace everything\n"
 "  ./process -m 1                   # Trace all processes, selective read/write\n"
 "  ./process -c \"claude,python\"    # Trace only claude/python processes\n"
-"  ./process -c \"ssh\" -d 1000     # Trace ssh processes lasting > 1 second\n";
+"  ./process -c \"ssh\" -d 1000     # Trace ssh processes lasting > 1 second\n"
+"  ./process -p 1234                # Trace only PID 1234\n";
 
 static const struct argp_option opts[] = {
 	{ "verbose", 'v', NULL, 0, "Verbose debug output" },
 	{ "duration", 'd', "DURATION-MS", 0, "Minimum process duration (ms) to report" },
 	{ "commands", 'c', "COMMAND-LIST", 0, "Comma-separated list of commands to trace (e.g., \"claude,python\")" },
+	{ "pid", 'p', "PID", 0, "Trace this PID only" },
 	{ "mode", 'm', "FILTER-MODE", 0, "Filter mode: 0=all, 1=proc, 2=filter (default=2)" },
 	{ "all", 'a', NULL, 0, "Deprecated: use -m 0 instead" },
 	{},
@@ -72,6 +92,15 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 			fprintf(stderr, "Invalid duration: %s\n", arg);
 			argp_usage(state);
 		}
+		break;
+	case 'p':
+		errno = 0;
+		env.pid = (pid_t)strtol(arg, NULL, 10);
+		if (errno || env.pid <= 0) {
+			fprintf(stderr, "Invalid PID: %s\n", arg);
+			argp_usage(state);
+		}
+		env.filter_mode = FILTER_MODE_FILTER;
 		break;
 	case 'a':
 		env.filter_mode = FILTER_MODE_ALL;
@@ -139,6 +168,125 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 
 static volatile bool exiting = false;
 
+// Shared function to print FILE_OPEN/FILE_CLOSE events
+static void print_file_operation_event(const struct event *e, uint64_t timestamp_ns, uint32_t count, const char *extra_fields)
+{
+	printf("{");
+	printf("\"timestamp\":%llu,", timestamp_ns);
+	printf("\"event\":\"%s\",", e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE");
+	printf("\"comm\":\"%s\",", e->comm);
+	printf("\"pid\":%d,", e->pid);
+	printf("\"count\":%u", count);
+	
+	if (e->file_op.is_open) {
+		printf(",\"filepath\":\"%s\",", e->file_op.filepath);
+		printf("\"flags\":%d", e->file_op.flags);
+	} else {
+		printf(",\"fd\":%d", e->file_op.fd);
+	}
+	
+	if (extra_fields && strlen(extra_fields) > 0) {
+		printf(",%s", extra_fields);
+	}
+	
+	printf("}\n");
+}
+
+// Shared function to print aggregated file events (for expired/process exit)
+static void print_aggregated_file_event(uint64_t timestamp_ns, uint32_t count, pid_t pid, bool is_open, const char *extra_fields)
+{
+	printf("{");
+	printf("\"timestamp\":%llu,", timestamp_ns);
+	printf("\"event\":\"%s\",", is_open ? "FILE_OPEN" : "FILE_CLOSE");
+	printf("\"pid\":%d,", pid);
+	printf("\"count\":%u", count);
+	
+	if (extra_fields && strlen(extra_fields) > 0) {
+		printf(",%s", extra_fields);
+	}
+	
+	printf("}\n");
+}
+
+// Hash function for file operation event
+static uint64_t hash_file_operation(const struct event *e)
+{
+	uint64_t hash = 5381;
+	hash = ((hash << 5) + hash) + e->pid;
+	hash = ((hash << 5) + hash) + (e->file_op.is_open ? 1 : 0);
+	
+	if (e->file_op.is_open) {
+		// For FILE_OPEN: hash the filepath
+		const char *str = e->file_op.filepath;
+		while (*str) {
+			hash = ((hash << 5) + hash) + *str++;
+		}
+	} else {
+		// For FILE_CLOSE: hash the fd (file descriptor)
+		hash = ((hash << 5) + hash) + e->file_op.fd;
+	}
+	
+	return hash;
+}
+
+// Get count for file operation (handles deduplication internally)
+static uint32_t get_file_op_count(const struct event *e, uint64_t timestamp_ns)
+{
+	if (e->type != EVENT_TYPE_FILE_OPERATION) {
+		return 1;  // Return count of 1 for non-file operations
+	}
+	
+	uint64_t hash = hash_file_operation(e);
+	
+	// Clean up expired entries first
+	for (int i = 0; i < hash_count; i++) {
+		if (timestamp_ns - file_hashes[i].timestamp_ns > FILE_DEDUP_WINDOW_NS) {
+			// Print aggregated result if count > 1
+			if (file_hashes[i].count > 1) {
+				print_aggregated_file_event(timestamp_ns, file_hashes[i].count, 0, file_hashes[i].is_open, "\"window_expired\":true");
+			}
+			
+			// Remove expired entry
+			file_hashes[i] = file_hashes[hash_count - 1];
+			hash_count--;
+			i--;
+		}
+	}
+	
+	// Check if this hash already exists
+	for (int i = 0; i < hash_count; i++) {
+		if (file_hashes[i].hash == hash) {
+			file_hashes[i].count++;
+			file_hashes[i].timestamp_ns = timestamp_ns;
+			return 0;  // Return 0 to indicate this should be skipped (duplicate)
+		}
+	}
+	
+	// Add new hash entry if we have space
+	if (hash_count < MAX_FILE_HASHES) {
+		file_hashes[hash_count].hash = hash;
+		file_hashes[hash_count].timestamp_ns = timestamp_ns;
+		file_hashes[hash_count].count = 1;
+		file_hashes[hash_count].is_open = e->file_op.is_open;
+		hash_count++;
+	}
+	
+	return 1;  // Return count of 1 for first occurrence
+}
+
+// Flush all pending aggregations for a specific PID
+static void flush_pid_file_ops(pid_t pid, uint64_t timestamp_ns)
+{
+	for (int i = 0; i < hash_count; i++) {
+		if (file_hashes[i].count > 1) {
+			print_aggregated_file_event(timestamp_ns, file_hashes[i].count, pid, file_hashes[i].is_open, "\"reason\":\"process_exit\"");
+		}
+	}
+	
+	// Clear all entries for this PID
+	hash_count = 0;
+}
+
 static void sig_handler(int sig)
 {
 	exiting = true;
@@ -197,12 +345,22 @@ static int populate_initial_pids(struct process_bpf *skel, char **command_list, 
 		bool should_track = (filter_mode == FILTER_MODE_ALL);
 		
 		/* If using filter mode, check if this process matches any configured filter */
-		if (filter_mode == FILTER_MODE_FILTER && command_list && command_count > 0) {
+		if (filter_mode == FILTER_MODE_FILTER) {
 			should_track = false;
-			for (int i = 0; i < command_count; i++) {
-				if (command_matches_filter(comm, command_list[i])) {
+			
+			/* Check if PID matches if -p option was specified */
+			if (env.pid > 0) {
+				if (pid == env.pid) {
 					should_track = true;
-					break;
+				}
+			}
+			/* Otherwise check command filters */
+			else if (command_list && command_count > 0) {
+				for (int i = 0; i < command_count; i++) {
+					if (command_matches_filter(comm, command_list[i])) {
+						should_track = true;
+						break;
+					}
 				}
 			}
 		}
@@ -242,12 +400,11 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	clock_gettime(CLOCK_REALTIME, &ts);
 	uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 
-	printf("{");
-	printf("\"type\":\"event\",");
-	printf("\"timestamp\":%llu,", timestamp_ns);
-	
 	switch (e->type) {
 		case EVENT_TYPE_PROCESS:
+			// For process events, always report immediately
+			printf("{");
+			printf("\"timestamp\":%llu,", timestamp_ns);
 			printf("\"event\":\"%s\",", e->exit_event ? "EXIT" : "EXEC");
 			printf("\"comm\":\"%s\",", e->comm);
 			printf("\"pid\":%d,", e->pid);
@@ -257,37 +414,48 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 				printf(",\"exit_code\":%u", e->exit_code);
 				if (e->duration_ns)
 					printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
+				
+				// Flush all pending aggregations for this PID
+				flush_pid_file_ops(e->pid, timestamp_ns);
 			} else {
 				printf(",\"filename\":\"%s\"", e->filename);
 			}
+			printf("}\n");
 			break;
 			
 		case EVENT_TYPE_BASH_READLINE:
+			// For bash readline events, always report immediately
+			printf("{");
+			printf("\"timestamp\":%llu,", timestamp_ns);
 			printf("\"event\":\"BASH_READLINE\",");
 			printf("\"comm\":\"%s\",", e->comm);
 			printf("\"pid\":%d,", e->pid);
 			printf("\"command\":\"%s\"", e->command);
+			printf("}\n");
 			break;
 			
 		case EVENT_TYPE_FILE_OPERATION:
-			printf("\"event\":\"%s\",", e->file_op.is_open ? "FILE_OPEN" : "FILE_CLOSE");
-			printf("\"comm\":\"%s\",", e->comm);
-			printf("\"pid\":%d,", e->pid);
-			if (e->file_op.is_open) {
-				printf("\"filepath\":\"%s\",", e->file_op.filepath);
-				printf("\"flags\":%d", e->file_op.flags);
-			} else {
-				printf("\"fd\":%d", e->file_op.fd);
+			// Get count for this file operation
+			uint32_t count = get_file_op_count(e, timestamp_ns);
+			
+			// Skip if this is a duplicate (count == 0)
+			if (count == 0) {
+				break;
 			}
+			
+			// Report the event with count
+			print_file_operation_event(e, timestamp_ns, count, NULL);
 			break;
 			
 		default:
+			// For unknown events, always report immediately
+			printf("{");
+			printf("\"timestamp\":%llu,", timestamp_ns);
 			printf("\"event\":\"UNKNOWN\",");
 			printf("\"event_type\":%d", e->type);
+			printf("}\n");
 			break;
 	}
-	
-	printf("}\n");
 
 	return 0;
 }
@@ -347,8 +515,8 @@ int main(int argc, char **argv)
 	}
 	
 	/* Output configuration as JSON */
-	printf("Config: filter_mode=%d, min_duration_ms=%ld, commands=%d, initial_tracked_pids=%d\n", 
-	       env.filter_mode, env.min_duration_ms, env.command_count, tracked_count);
+	printf("Config: filter_mode=%d, min_duration_ms=%ld, commands=%d, pid=%d, initial_tracked_pids=%d\n", 
+	       env.filter_mode, env.min_duration_ms, env.command_count, env.pid, tracked_count);
 
 	/* Attach tracepoints */
 	err = process_bpf__attach(skel);
@@ -390,6 +558,9 @@ cleanup:
 	for (int i = 0; i < env.command_count; i++) {
 		free(env.command_list[i]);
 	}
+	
+	/* Clean up file deduplication tracking */
+	hash_count = 0;
 
 	return err < 0 ? -err : 0;
 }
