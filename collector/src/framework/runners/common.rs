@@ -178,26 +178,24 @@ impl BinaryExecutor {
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             
-                            log::warn!("{}Invalid UTF-8 data from binary at line {}, skipping line", 
-                                runner_info, line_count + 1);
-                            log::warn!("{}Raw data (printable): {}", runner_info, printable_data);
-                            log::warn!("{}Raw data (hex): {}", runner_info, hex_dump);
+                            log::warn!("{}Invalid UTF-8 data from binary at line {}. Raw data (printable): '{}', (hex): '{}'",
+                                runner_info, line_count + 1, printable_data, hex_dump);
                             
                             // Try to read the next line 
                             continue;
                         } else {
-                            debug!("Error reading from binary: {}", e);
+                            log::warn!("Error reading from binary: {}", e);
                             break;
                         }
                     }
                 }
             }
             
-            debug!("Terminating binary process");
+            log::info!("Terminating binary process");
             
             // Terminate the child process
             if let Err(e) = child.kill().await {
-                debug!("Failed to kill binary process: {}", e);
+                log::warn!("Failed to kill binary process: {}", e);
             }
             
             // Wait for process to finish
@@ -206,7 +204,7 @@ impl BinaryExecutor {
                     debug!("Binary process terminated with status: {}", status);
                 }
                 Err(e) => {
-                    debug!("Error waiting for binary process: {}", e);
+                    log::warn!("Error waiting for binary process: {}", e);
                 }
             }
         };
