@@ -149,26 +149,39 @@ impl BinaryExecutor {
                                         .unwrap_or("unknown")
                                 ));
                             
-                            // Try to extract some bytes from the error for debugging
-                            let error_context = if let Some(inner_error) = e.get_ref() {
-                                if let Some(utf8_error) = inner_error.downcast_ref::<std::str::Utf8Error>() {
-                                    let valid_up_to = utf8_error.valid_up_to();
-                                    let error_bytes = &line.as_bytes()[valid_up_to..];
-                                    let hex_dump = error_bytes.iter()
-                                        .take(16) // Show first 16 bytes
-                                        .map(|b| format!("{:02x}", b))
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    format!(" (invalid bytes at position {}: {})", valid_up_to, hex_dump)
-                                } else {
-                                    String::new()
-                                }
-                            } else {
-                                String::new()
-                            };
+                            // Convert raw bytes to a printable format
+                            let raw_data = line.as_bytes();
+                            let printable_data = raw_data.iter()
+                                .map(|&b| {
+                                    if b.is_ascii_graphic() || b == b' ' {
+                                        // Printable ASCII characters
+                                        char::from(b).to_string()
+                                    } else if b == b'\t' {
+                                        "\\t".to_string()
+                                    } else if b == b'\r' {
+                                        "\\r".to_string()
+                                    } else if b == b'\n' {
+                                        "\\n".to_string()
+                                    } else if b == b'\0' {
+                                        "\\0".to_string()
+                                    } else {
+                                        // Non-printable characters as hex
+                                        format!("\\x{:02x}", b)
+                                    }
+                                })
+                                .collect::<String>();
                             
-                            log::warn!("{}Invalid UTF-8 data from binary at line {}, skipping line{}", 
-                                runner_info, line_count + 1, error_context);
+                            // Also show hex dump for debugging
+                            let hex_dump = raw_data.iter()
+                                .take(32) // Show first 32 bytes
+                                .map(|b| format!("{:02x}", b))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            
+                            log::warn!("{}Invalid UTF-8 data from binary at line {}, skipping line", 
+                                runner_info, line_count + 1);
+                            log::warn!("{}Raw data (printable): {}", runner_info, printable_data);
+                            log::warn!("{}Raw data (hex): {}", runner_info, hex_dump);
                             
                             // Try to read the next line 
                             continue;

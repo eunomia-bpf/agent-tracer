@@ -20,3 +20,10 @@ log = "0.4"
 env_logger = "0.10"
 chunked_transfer = "1.5"
 
+# Web server dependencies
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+rust-embed = { version = "8.7", features = ["debug-embed", "compression"] }
+mime_guess = "2.0"
+
