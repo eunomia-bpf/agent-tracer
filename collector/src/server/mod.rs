@@ -6,5 +6,12 @@
 pub mod assets;
 pub mod web;
 
+#[cfg(test)]
+mod test_assets;
+#[cfg(test)]
+mod test_web;
+#[cfg(test)]
+mod test_integration;
+
 pub use assets::FrontendAssets;
 pub use web::WebServer;
