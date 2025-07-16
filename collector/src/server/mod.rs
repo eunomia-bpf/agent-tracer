@@ -13,5 +13,4 @@ mod test_web;
 #[cfg(test)]
 mod test_integration;
 
-pub use assets::FrontendAssets;
 pub use web::WebServer;

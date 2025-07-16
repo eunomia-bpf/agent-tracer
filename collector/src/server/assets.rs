@@ -20,12 +20,12 @@ impl FrontendAssets {
     
     /// Get static asset (CSS, JS, images, etc.)
     pub fn get_static(&self, path: &str) -> Option<Cow<'static, [u8]>> {
-        StaticAssets::get(path)
+        StaticAssets::get(path).map(|file| file.data)
     }
     
     /// Get page asset (HTML files)
     pub fn get_page(&self, path: &str) -> Option<Cow<'static, [u8]>> {
-        PageAssets::get(path)
+        PageAssets::get(path).map(|file| file.data)
     }
     
     /// Get any asset by path
@@ -49,8 +49,8 @@ impl FrontendAssets {
     }
     
     /// Get MIME type for a file path
-    pub fn get_content_type(&self, path: &str) -> &'static str {
-        from_path(path).first_or_octet_stream().as_ref()
+    pub fn get_content_type(&self, path: &str) -> String {
+        from_path(path).first_or_octet_stream().to_string()
     }
     
     /// List all available static assets

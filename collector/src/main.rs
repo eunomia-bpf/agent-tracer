@@ -2,14 +2,18 @@ use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal;
+use tokio::sync::broadcast;
 
 mod framework;
+mod server;
 
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, AgentRunner, RunnerError, Runner},
     analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter, print_global_http_filter_metrics}
 };
+
+use server::WebServer;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -62,6 +66,12 @@ enum Commands {
         /// Suppress console output
         #[arg(short, long)]
         quiet: bool,
+        /// Start web server on port 8080
+        #[arg(long)]
+        server: bool,
+        /// Server port (used with --server)
+        #[arg(long, default_value = "8080")]
+        server_port: u16,
         /// Additional arguments to pass to the SSL binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -71,6 +81,12 @@ enum Commands {
         /// Suppress console output
         #[arg(short, long)]
         quiet: bool,
+        /// Start web server on port 8080
+        #[arg(long)]
+        server: bool,
+        /// Server port (used with --server)
+        #[arg(long, default_value = "8080")]
+        server_port: u16,
         /// Additional arguments to pass to the process binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -121,6 +137,12 @@ enum Commands {
         /// Suppress console output
         #[arg(short, long)]
         quiet: bool,
+        /// Start web server on port 8080
+        #[arg(long)]
+        server: bool,
+        /// Server port (used with --server)
+        #[arg(long, default_value = "8080")]
+        server_port: u16,
     },
 }
 
@@ -140,9 +162,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, args).await.map_err(convert_runner_error)?,
-        Commands::Process { quiet, args } => run_raw_process(&binary_extractor, *quiet, args).await.map_err(convert_runner_error)?,
-        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, output, quiet } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, output.as_deref(), *quiet).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, server, server_port, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
+        Commands::Process { quiet, server, server_port, args } => run_raw_process(&binary_extractor, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
+        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, output, quiet, server, server_port } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, output.as_deref(), *quiet, *server, *server_port).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
@@ -150,11 +172,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, ssl_filter_patterns: &Vec<String>, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, ssl_filter_patterns: &Vec<String>, quiet: bool, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
     let mut ssl_runner = SslRunner::from_binary_extractor(binary_extractor.get_sslsniff_path());
+    
+    // Set up event broadcasting for server if enabled
+    let (event_sender, _event_receiver) = broadcast::channel(1000);
     
     // Add additional arguments if provided
     if !args.is_empty() {
@@ -203,22 +228,32 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
         ssl_runner = ssl_runner.add_analyzer(Box::new(OutputAnalyzer::new()));
     }
     
+    // Start web server if enabled
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+        .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
+    
     let mut stream = ssl_runner.run().await?;
     
     // Consume the stream to actually process events
-    while let Some(_event) = stream.next().await {
-        // Events are processed by the analyzers in the chain
+    while let Some(event) = stream.next().await {
+        // Forward events to web server if enabled
+        if enable_server {
+            let _ = event_sender.send(event);
+        }
     }
     
     Ok(())
 }
 
 /// Show raw process events as JSON
-async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw Process Events");
     println!("{}", "=".repeat(60));
     
     let mut process_runner = ProcessRunner::from_binary_extractor(binary_extractor.get_process_path());
+    
+    // Set up event broadcasting for server if enabled
+    let (event_sender, _event_receiver) = broadcast::channel(1000);
     
     // Add additional arguments if provided
     if !args.is_empty() {
@@ -232,12 +267,19 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, args: 
     process_runner = process_runner
         .add_analyzer(Box::new(FileLogger::new("process.log").unwrap()));
     
+    // Start web server if enabled
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+        .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
+    
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
     let mut stream = process_runner.run().await?;
 
     // Consume the stream to actually process events
-    while let Some(_event) = stream.next().await {
-        // Events are processed by the analyzers in the chain
+    while let Some(event) = stream.next().await {
+        // Forward events to web server if enabled
+        if enable_server {
+            let _ = event_sender.send(event);
+        }
     }
 
     Ok(())
@@ -260,9 +302,14 @@ async fn run_agent(
     http_filter: &[String],
     output: Option<&str>,
     quiet: bool,
+    enable_server: bool,
+    server_port: u16,
 ) -> Result<(), RunnerError> {
     println!("Agent Monitoring");
     println!("{}", "=".repeat(60));
+    
+    // Set up event broadcasting for server if enabled
+    let (event_sender, _event_receiver) = broadcast::channel(1000);
     
     let mut agent = AgentRunner::new("agent");
     
@@ -363,12 +410,50 @@ async fn run_agent(
              agent.runner_count(), agent.analyzer_count());
     println!("Press Ctrl+C to stop");
     
+    // Start web server if enabled
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+        .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
+    
     let mut stream = agent.run().await?;
     
     // Consume the stream to actually process events
-    while let Some(_event) = stream.next().await {
-        // Events are processed by the analyzers in the chain
+    while let Some(event) = stream.next().await {
+        // Forward events to web server if enabled
+        if enable_server {
+            let _ = event_sender.send(event);
+        }
     }
     
     Ok(())
+}
+
+
+// Shared server management function
+async fn start_web_server_if_enabled(
+    enable_server: bool,
+    port: u16,
+    event_sender: broadcast::Sender<crate::framework::core::Event>,
+) -> Result<Option<tokio::task::JoinHandle<()>>, Box<dyn std::error::Error>> {
+    if !enable_server {
+        return Ok(None);
+    }
+
+    let addr = format!("127.0.0.1:{}", port).parse()
+        .map_err(|e| format!("Invalid server address: {}", e))?;
+    
+    let web_server = WebServer::new(event_sender);
+    
+    println!("🌐 Starting web server on http://{}", addr);
+    println!("   Frontend will be available once the server starts");
+    
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = web_server.start(addr).await {
+            eprintln!("❌ Web server error: {}", e);
+        }
+    });
+    
+    // Give the server a moment to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    Ok(Some(server_handle))
 }

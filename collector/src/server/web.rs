@@ -2,7 +2,7 @@ use crate::framework::core::Event;
 use crate::server::assets::FrontendAssets;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{body::Bytes, Request, Response, Result, Method, StatusCode};
+use hyper::{body::Bytes, Request, Response, Method, StatusCode};
 use hyper_util::rt::TokioIo;
 use http_body_util::Full;
 use std::convert::Infallible;
@@ -24,22 +24,22 @@ impl WebServer {
         }
     }
     
-    pub async fn start(&self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-        let listener = TcpListener::bind(addr).await?;
-        println!("🚀 Frontend server running on http://{}", addr);
+    pub async fn start(&self, addr: SocketAddr) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(addr).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        log::info!("🚀 Frontend server running on http://{}", addr);
         
         // List embedded assets for debugging
         let all_assets = self.assets.list_all_assets();
-        println!("📦 Embedded {} assets:", all_assets.len());
+        log::info!("📦 Embedded {} assets:", all_assets.len());
         for asset in all_assets.iter().take(10) {
-            println!("   - {}", asset);
+            log::info!("   - {}", asset);
         }
         if all_assets.len() > 10 {
-            println!("   ... and {} more", all_assets.len() - 10);
+            log::info!("   ... and {} more", all_assets.len() - 10);
         }
         
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, _) = listener.accept().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             let assets = Arc::clone(&self.assets);
             let event_sender = self.event_sender.clone();
             
@@ -53,7 +53,7 @@ impl WebServer {
                     .serve_connection(io, service)
                     .await
                 {
-                    eprintln!("❌ Error serving connection: {:?}", err);
+                    log::error!("❌ Error serving connection: {:?}", err);
                 }
             });
         }
@@ -64,10 +64,10 @@ async fn handle_request(
     req: Request<hyper::body::Incoming>,
     assets: Arc<FrontendAssets>,
     event_sender: broadcast::Sender<Event>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
     let path = req.uri().path();
     
-    println!("📨 {} {}", req.method(), path);
+    log::info!("📨 {} {}", req.method(), path);
     
     match (req.method(), path) {
         // Serve static assets
@@ -88,7 +88,7 @@ async fn handle_request(
         
         // 404 for everything else
         _ => {
-            println!("❌ 404 Not Found: {}", path);
+            log::info!("❌ 404 Not Found: {}", path);
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "text/plain")
@@ -101,17 +101,17 @@ async fn handle_request(
 async fn serve_asset(
     assets: Arc<FrontendAssets>,
     path: &str,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
     if let Some(content) = assets.get(path) {
         let content_type = assets.get_content_type(path);
-        println!("✅ Serving asset: {} ({})", path, content_type);
+        log::info!("✅ Serving asset: {} ({})", path, content_type);
         Ok(Response::builder()
             .header("Content-Type", content_type)
             .header("Cache-Control", "public, max-age=31536000")
-            .body(Full::new(Bytes::from(content.as_ref())))
+            .body(Full::new(Bytes::from(content.to_vec())))
             .unwrap())
     } else {
-        println!("❌ Asset not found: {}", path);
+        log::info!("❌ Asset not found: {}", path);
         Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header("Content-Type", "text/plain")
@@ -122,7 +122,7 @@ async fn serve_asset(
 
 async fn serve_events_api(
     _event_sender: broadcast::Sender<Event>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
     // Return sample events as JSON for now
     let events = serde_json::json!([
         {
@@ -148,7 +148,7 @@ async fn serve_events_api(
         }
     ]);
     
-    println!("📊 Serving events API");
+    log::info!("📊 Serving events API");
     Ok(Response::builder()
         .header("Content-Type", "application/json")
         .header("Access-Control-Allow-Origin", "*")
@@ -158,7 +158,7 @@ async fn serve_events_api(
 
 async fn serve_assets_list(
     assets: Arc<FrontendAssets>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
     let all_assets = assets.list_all_assets();
     let response = serde_json::json!({
         "static_assets": assets.list_static_assets(),
@@ -166,7 +166,7 @@ async fn serve_assets_list(
         "total_count": all_assets.len()
     });
     
-    println!("📋 Serving assets list ({} assets)", all_assets.len());
+    log::info!("📋 Serving assets list ({} assets)", all_assets.len());
     Ok(Response::builder()
         .header("Content-Type", "application/json")
         .header("Access-Control-Allow-Origin", "*")
