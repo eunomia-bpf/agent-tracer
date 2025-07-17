@@ -24,6 +24,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
 
 [[package]]
+name = "agentsight"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "chrono",
+ "chunked_transfer",
+ "clap",
+ "env_logger",
+ "futures",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "mime_guess",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "uuid",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,32 +319,6 @@ name = "clap_lex"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
-
-[[package]]
-name = "collector"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "async-trait",
- "chrono",
- "chunked_transfer",
- "clap",
- "env_logger",
- "futures",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "log",
- "mime_guess",
- "rust-embed",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "uuid",
-]
 
 [[package]]
 name = "colorchoice"
