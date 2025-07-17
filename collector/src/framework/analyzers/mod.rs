@@ -23,6 +23,7 @@ pub mod http_filter;
 pub mod auth_header_remover;
 pub mod ssl_filter;
 pub mod event;
+pub mod common;
 
 #[cfg(test)]
 mod sse_processor_tests;

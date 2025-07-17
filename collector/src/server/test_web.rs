@@ -9,7 +9,7 @@ mod tests {
     #[tokio::test]
     async fn test_web_server_creation() {
         let (event_sender, _receiver) = broadcast::channel(100);
-        let web_server = WebServer::new(event_sender);
+        let _web_server = WebServer::new(event_sender);
         
         // Test that we can create a web server without panic
         assert!(true, "WebServer created successfully");
@@ -67,10 +67,9 @@ mod tests {
     
     #[tokio::test]
     async fn test_http_client_request() {
-        use hyper::{Body, Client, Request, Uri};
+        use hyper::Uri;
         use hyper_util::rt::TokioExecutor;
         use hyper_util::client::legacy::Client as LegacyClient;
-        use http_body_util::BodyExt;
         
         let (event_sender, _receiver) = broadcast::channel(100);
         let web_server = WebServer::new(event_sender);
@@ -90,7 +89,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
         
         // Create HTTP client
-        let client = LegacyClient::builder(TokioExecutor::new()).build_http();
+        let client = LegacyClient::builder(TokioExecutor::new()).build_http::<http_body_util::Full<hyper::body::Bytes>>();
         
         // Test root endpoint
         let uri = format!("http://{}/", addr);

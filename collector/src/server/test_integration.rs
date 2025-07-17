@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
-    use super::super::{FrontendAssets, WebServer};
+    use super::super::{WebServer, assets::FrontendAssets};
     use crate::framework::core::Event;
     use tokio::sync::broadcast;
     
@@ -30,10 +30,8 @@ mod integration_tests {
     
     #[tokio::test]
     async fn test_basic_server_lifecycle() {
-        use std::time::Duration;
-        
         let (event_sender, _receiver) = broadcast::channel(100);
-        let web_server = WebServer::new(event_sender.clone());
+        let _web_server = WebServer::new(event_sender.clone());
         
         // Test event creation
         let test_event = Event::new(

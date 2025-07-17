@@ -1,4 +1,4 @@
-use super::{Analyzer, AnalyzerError};
+use super::{Analyzer, AnalyzerError, common};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
@@ -233,8 +233,18 @@ impl FilterExpression {
         }
     }
 
+
     /// Evaluate a single condition against SSL event data
     fn evaluate_condition(&self, field: &str, operator: &str, expected: &str, data: &Value) -> bool {
+        // Handle special data.type field
+        if field == "data.type" {
+            if let Some(data_value) = data.get("data").and_then(|v| v.as_str()) {
+                let detected_type = common::detect_data_type(data_value);
+                return self.compare_strings(detected_type, operator, expected);
+            }
+            return false;
+        }
+
         // Get the field value from SSL event data
         let field_value = match field {
             "data" => data.get("data").and_then(|v| v.as_str()),

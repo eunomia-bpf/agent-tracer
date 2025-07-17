@@ -24,8 +24,8 @@ impl WebServer {
         }
     }
     
-    pub async fn start(&self, addr: SocketAddr) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let listener = TcpListener::bind(addr).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    pub async fn start(&self, addr: SocketAddr) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind(addr).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         log::info!("🚀 Frontend server running on http://{}", addr);
         
         // List embedded assets for debugging
@@ -39,7 +39,7 @@ impl WebServer {
         }
         
         loop {
-            let (stream, _) = listener.accept().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let (stream, _) = listener.accept().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
             let assets = Arc::clone(&self.assets);
             let event_sender = self.event_sender.clone();
             

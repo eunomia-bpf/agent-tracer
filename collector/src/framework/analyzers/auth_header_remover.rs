@@ -44,11 +44,6 @@ impl AuthHeaderRemover {
         }
     }
 
-    /// Enable debug logging for header removal
-    pub fn with_debug(mut self) -> Self {
-        self.debug = true;
-        self
-    }
 
     /// Remove authorization headers from HTTP event data
     fn remove_auth_headers(&self, mut event_data: Value) -> Value {

@@ -1,4 +1,4 @@
-use super::{Analyzer, AnalyzerError};
+use super::{Analyzer, AnalyzerError, common};
 use crate::framework::runners::EventStream;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
@@ -17,21 +17,9 @@ impl OutputAnalyzer {
         }
     }
 
-    /// Convert binary data to hex string
+    /// Convert binary data to hex string using common logic
     fn data_to_string(data: &serde_json::Value) -> String {
-        match data {
-            serde_json::Value::String(s) => {
-                // Check if string contains valid UTF-8
-                if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
-                    s.clone()
-                } else {
-                    // Convert to hex if it contains control characters (likely binary)
-                    format!("HEX:{}", hex::encode(s.as_bytes()))
-                }
-            }
-            serde_json::Value::Null => "null".to_string(),
-            _ => data.to_string()
-        }
+        common::data_to_string(data)
     }
 }
 
