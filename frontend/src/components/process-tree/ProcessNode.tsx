@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDownIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react/24/outline';
-import { ProcessNode as ProcessNodeType, ParsedEvent } from '@/utils/eventParsers';
+import { ProcessNode as ProcessNodeType, ParsedEvent, TimelineItem } from '@/utils/eventParsers';
 import { UnifiedBlock } from './UnifiedBlock';
 import { adaptEventToUnifiedBlock } from './BlockAdapters';
 
@@ -89,6 +89,25 @@ export function ProcessNode({
     );
   };
 
+  const renderTimelineItem = (item: TimelineItem, index: number) => {
+    if (item.type === 'event' && item.event) {
+      return renderEvent(item.event);
+    } else if (item.type === 'process' && item.process) {
+      return (
+        <ProcessNode
+          key={item.process.pid}
+          process={item.process}
+          depth={depth + 1}
+          expandedProcesses={expandedProcesses}
+          expandedEvents={expandedEvents}
+          onToggleProcess={onToggleProcess}
+          onToggleEvent={onToggleEvent}
+        />
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="select-none">
       {/* Process Header */}
@@ -133,30 +152,12 @@ export function ProcessNode({
         </div>
       </div>
 
-      {/* Expanded Content */}
+      {/* Expanded Content - Timeline View */}
       {isExpanded && (
         <div style={{ marginLeft: `${indent + 32}px` }} className="mt-1 mb-2">
-          {/* Events */}
-          {process.events.length > 0 && (
-            <div className="space-y-1 mb-2">
-              {process.events.map(event => renderEvent(event))}
-            </div>
-          )}
-          
-          {/* Child Processes */}
-          {process.children.length > 0 && (
+          {process.timeline.length > 0 && (
             <div className="space-y-1">
-              {process.children.map(child => (
-                <ProcessNode
-                  key={child.pid}
-                  process={child}
-                  depth={depth + 1}
-                  expandedProcesses={expandedProcesses}
-                  expandedEvents={expandedEvents}
-                  onToggleProcess={onToggleProcess}
-                  onToggleEvent={onToggleEvent}
-                />
-              ))}
+              {process.timeline.map((item, index) => renderTimelineItem(item, index))}
             </div>
           )}
         </div>

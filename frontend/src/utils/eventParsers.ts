@@ -6,7 +6,15 @@ export interface ProcessNode {
   ppid?: number;
   children: ProcessNode[];
   events: ParsedEvent[];
+  timeline: TimelineItem[]; // Mixed events and child processes in chronological order
   isExpanded: boolean;
+}
+
+export interface TimelineItem {
+  type: 'event' | 'process';
+  timestamp: number;
+  event?: ParsedEvent;
+  process?: ProcessNode;
 }
 
 export interface ParsedEvent {
@@ -511,6 +519,23 @@ function parseGenericEvent(event: Event): ParsedEvent {
   };
 }
 
+// Helper function to get the earliest timestamp for a process
+function getEarliestTimestamp(process: ProcessNode): number {
+  let earliest = Infinity;
+  
+  // Check process events
+  if (process.events.length > 0) {
+    earliest = Math.min(earliest, process.events[0].timestamp);
+  }
+  
+  // Check child processes recursively
+  process.children.forEach(child => {
+    earliest = Math.min(earliest, getEarliestTimestamp(child));
+  });
+  
+  return earliest === Infinity ? 0 : earliest;
+}
+
 // Build process hierarchy from events
 export function buildProcessTree(events: Event[]): ProcessNode[] {
   const processMap = new Map<number, ProcessNode>();
@@ -527,6 +552,7 @@ export function buildProcessTree(events: Event[]): ProcessNode[] {
         comm: comm || 'unknown',
         children: [],
         events: [],
+        timeline: [],
         isExpanded: false
       });
     }
@@ -565,6 +591,32 @@ export function buildProcessTree(events: Event[]): ProcessNode[] {
     }
   });
   
+  // Build timeline for each process (mix events and child processes chronologically)
+  processMap.forEach(process => {
+    const timelineItems: TimelineItem[] = [];
+    
+    // Add all events as timeline items
+    process.events.forEach(event => {
+      timelineItems.push({
+        type: 'event',
+        timestamp: event.timestamp,
+        event
+      });
+    });
+    
+    // Add child processes as timeline items (using their earliest timestamp)
+    process.children.forEach(child => {
+      timelineItems.push({
+        type: 'process',
+        timestamp: getEarliestTimestamp(child),
+        process: child
+      });
+    });
+    
+    // Sort timeline by timestamp
+    process.timeline = timelineItems.sort((a, b) => a.timestamp - b.timestamp);
+  });
+  
   // Root processes are those without parents
   processMap.forEach((process, pid) => {
     if (!childProcesses.has(pid)) {
@@ -572,5 +624,6 @@ export function buildProcessTree(events: Event[]): ProcessNode[] {
     }
   });
   
-  return rootProcesses.sort((a, b) => a.pid - b.pid);
+  // Sort root processes by their earliest timestamp
+  return rootProcesses.sort((a, b) => getEarliestTimestamp(a) - getEarliestTimestamp(b));
 }
