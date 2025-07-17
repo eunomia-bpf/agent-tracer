@@ -17,11 +17,12 @@ pub struct WebServer {
 }
 
 impl WebServer {
-    pub fn new(event_sender: broadcast::Sender<Event>) -> Self {
-        Self {
-            assets: Arc::new(FrontendAssets::new()),
+    pub fn new(event_sender: broadcast::Sender<Event>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let assets = FrontendAssets::new()?;
+        Ok(Self {
+            assets: Arc::new(assets),
             event_sender,
-        }
+        })
     }
     
     pub async fn start(&self, addr: SocketAddr) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -30,7 +31,7 @@ impl WebServer {
         
         // List embedded assets for debugging
         let all_assets = self.assets.list_all_assets();
-        log::info!("📦 Embedded {} assets:", all_assets.len());
+        log::info!("📦 Embedded {} assets from frontend/dist:", all_assets.len());
         for asset in all_assets.iter().take(10) {
             log::info!("   - {}", asset);
         }
@@ -70,15 +71,7 @@ async fn handle_request(
     log::info!("📨 {} {}", req.method(), path);
     
     match (req.method(), path) {
-        // Serve static assets
-        (&Method::GET, "/") | (&Method::GET, "/index.html") => {
-            serve_asset(assets, "/").await
-        }
-        (&Method::GET, path) if path.starts_with("/_next/") => {
-            serve_asset(assets, path).await
-        }
-        
-        // API endpoints
+        // API endpoints first
         (&Method::GET, "/api/events") => {
             serve_events_api(event_sender).await
         }
@@ -86,9 +79,14 @@ async fn handle_request(
             serve_assets_list(assets).await
         }
         
-        // 404 for everything else
+        // Serve static assets (catch-all for GET requests)
+        (&Method::GET, _) => {
+            serve_asset(assets, path).await
+        }
+        
+        // 404 for non-GET methods
         _ => {
-            log::info!("❌ 404 Not Found: {}", path);
+            log::info!("❌ 404 Not Found: {} {}", req.method(), path);
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "text/plain")
@@ -161,8 +159,7 @@ async fn serve_assets_list(
 ) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
     let all_assets = assets.list_all_assets();
     let response = serde_json::json!({
-        "static_assets": assets.list_static_assets(),
-        "page_assets": assets.list_page_assets(),
+        "assets": all_assets,
         "total_count": all_assets.len()
     });
     

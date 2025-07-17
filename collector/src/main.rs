@@ -458,7 +458,7 @@ async fn start_web_server_if_enabled(
     let addr = format!("127.0.0.1:{}", port).parse()
         .map_err(|e| format!("Invalid server address: {}", e))?;
     
-    let web_server = WebServer::new(event_sender);
+    let web_server = WebServer::new(event_sender).map_err(|e| format!("Failed to create web server: {}", e))?;
     
     println!("🌐 Starting web server on http://{}", addr);
     println!("   Frontend will be available once the server starts");
