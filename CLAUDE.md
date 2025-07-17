@@ -68,13 +68,14 @@ sudo src/sslsniff
 # Run collector with different modes
 cd collector && cargo run ssl --sse-merge
 cd collector && cargo run process
-cd collector && cargo run agent --comm python --pid 1234
+cd collector && cargo run trace --ssl --process --comm python --server
+cd collector && cargo run record --comm claude --server-port 8080
 
 # Run frontend development server
 cd frontend && npm run dev
 
 # Run embedded web server for frontend
-cd collector && cargo run server
+cd collector && cargo run server --log-file trace.log
 
 # Build with AddressSanitizer for debugging
 cd src && make debug
@@ -117,8 +118,16 @@ cd frontend && npm run build  # Also runs type checking
    - Next.js/React application for real-time event visualization
    - Timeline view with log parsing and semantic event processing
    - TypeScript implementation with Tailwind CSS styling
+   - Embedded web server integration via `/api/events` endpoint
 
-4. **Analysis Tools** (`script/`)
+4. **Embedded Web Server** (`collector/src/server/`)
+   - Hyper-based HTTP server with embedded frontend assets
+   - `/api/events` endpoint for log file serving
+   - `/api/assets` endpoint for asset enumeration
+   - Real-time event broadcasting with tokio broadcast channels
+   - Static asset serving with proper MIME types and caching
+
+5. **Analysis Tools** (`script/`)
    - Python utilities for SSL traffic analysis and timeline generation
    - Data processing pipelines for correlation analysis
 
@@ -132,7 +141,7 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 
 - **`framework/core/events.rs`**: Core event system with standardized `Event` structure
 - **`framework/runners/`**: Data collection implementations with fluent builders
-- **`framework/analyzers/`**: Stream processing plugins (ChunkMerger, FileLogger, Output)
+- **`framework/analyzers/`**: Stream processing plugins (ChunkMerger, FileLogger, Output, HTTPFilter, SSLFilter, AuthHeaderRemover)
 - **`framework/binary_extractor.rs`**: Manages embedded eBPF binaries with security
 
 ### Event Flow
@@ -177,6 +186,17 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 - Binary extraction handled automatically via `BinaryExtractor` with temp file cleanup
 - Frontend configuration through environment variables and build-time settings
 
+### Advanced Filtering and Analysis
+
+The framework includes sophisticated filtering capabilities for both SSL and HTTP traffic:
+
+- **SSL Filter**: Expression-based filtering with field-specific patterns (data, function, latency, etc.)
+- **HTTP Filter**: Request/response filtering by method, path, status code, headers
+- **Authorization Header Removal**: Automatically removes sensitive headers from HTTP events
+- **Filter Expressions**: Support for AND/OR logic with escape sequences
+- **Global Metrics**: Atomic counters for filter performance tracking
+- **Log Rotation**: Built-in log rotation with configurable size limits
+
 ## Key Design Principles
 
 1. **Streaming Architecture**: Real-time event processing with minimal memory usage and async/await
@@ -185,6 +205,7 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 4. **Resource Management**: Automatic cleanup of temporary files, processes, and kernel resources
 5. **Type Safety**: Rust type system ensures memory safety and prevents common vulnerabilities
 6. **Zero-Instrumentation**: System-level monitoring without modifying target applications
+7. **Integrated Web Interface**: Embedded web server for real-time visualization and log serving
 
 ## Development Workflow
 
@@ -201,10 +222,10 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 The collector uses a subcommand-based CLI:
 - `ssl`: Monitor SSL/TLS traffic with configurable filtering and analysis
 - `process`: Monitor process lifecycle events and file operations  
-- `agent`: Combined monitoring for specific processes (by PID or command name)
-- `server`: Run embedded web server with frontend for visualization
+- `trace`: Combined SSL and Process monitoring with configurable options (most flexible)
+- `record`: Optimized agent activity recording with predefined filters for common use cases
 
-Each subcommand supports its own set of flags and options for customization.
+All commands support integrated web server via `--server` flag and log file serving via `--log-file` parameter. The `trace` command provides the most comprehensive monitoring capabilities with granular control over both SSL and process monitoring.
 
 ## Testing Strategy
 
@@ -262,9 +283,16 @@ sudo ./src/process -c python
 cd collector && cargo run process -- -c python
 ```
 
-### Combined Agent Monitoring
+### Combined Monitoring with Trace Command
 ```bash
-cd collector && cargo run agent --comm python --pid 1234
+# Basic trace monitoring
+cd collector && cargo run trace --ssl --process --comm python --server
+
+# Advanced trace with filtering
+cd collector && cargo run trace --ssl-filter "data.type=binary" --http-filter "request.method=POST" --server --log-file trace.log
+
+# Optimized agent recording
+cd collector && cargo run record --comm claude --server-port 8080
 ```
 
 ### Frontend Visualization
@@ -274,6 +302,10 @@ cd frontend && npm run dev
 # Open http://localhost:3000/timeline
 
 # Using embedded web server in collector
-cd collector && cargo run server
+cd collector && cargo run server --log-file trace.log
+# Open http://localhost:8080/timeline
+
+# Server integrated with monitoring
+cd collector && cargo run trace --server --log-file output.log
 # Open http://localhost:8080/timeline
 ```

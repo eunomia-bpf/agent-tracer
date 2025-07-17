@@ -10,14 +10,21 @@ AgentSight is a comprehensive observability framework designed specifically for 
 ## Quick Start
 
 ```bash
-make install
+wget https://github.com/eunomia-bpf/agentsight/releases/download/v0.0.45/agentsight && chmod +x agentsight
 # Record agent behavior from claude
-agentsight record -c "claude"
+sudo ./agentsight record -c "claude"
 ```
+
+Visit [http://127.0.0.1:8080](http://127.0.0.1:8080) to view the recorded data.
 
 <div align="center">
   <img src="docs/demo-tree.png" alt="AgentSight Demo - Process Tree Visualization" width="800">
   <p><em>Real-time process tree visualization showing AI agent interactions and system calls</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/demo-timeline.png" alt="AgentSight Demo - Timeline Visualization" width="800">
+  <p><em>Real-time timeline visualization showing AI agent interactions and system calls</em></p>
 </div>
 
 

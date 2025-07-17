@@ -8,3 +8,5 @@ ssl_analyzed.json
 __pycache__/
 ssl_timeline.json
 .venv/
+agentsight
+record.log
