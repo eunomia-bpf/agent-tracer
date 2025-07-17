@@ -12,11 +12,11 @@ interface ProcessBlockProps {
 export function ProcessBlock({ event, onToggle }: ProcessBlockProps) {
   const { id, title, content, metadata, isExpanded } = event;
   
-  const truncatedContent = content.length > 120 
-    ? content.substring(0, 120) + '...' 
+  const truncatedContent = content.length > 300 
+    ? content.substring(0, 300) + '...' 
     : content;
 
-  const shouldShowExpandButton = content.length > 120;
+  const shouldShowExpandButton = content.length > 300;
 
   // Extract process event details
   const eventType = metadata.event || 'process';
@@ -27,18 +27,18 @@ export function ProcessBlock({ event, onToggle }: ProcessBlockProps) {
   // Color scheme based on event type
   const getEventColor = (event: string) => {
     const lowerEvent = event.toLowerCase();
-    if (lowerEvent.includes('exec')) return 'text-green-600';
-    if (lowerEvent.includes('exit')) return 'text-red-600';
-    if (lowerEvent.includes('fork')) return 'text-blue-600';
-    return 'text-purple-600';
+    if (lowerEvent.includes('exec')) return 'text-green-700';
+    if (lowerEvent.includes('exit')) return 'text-red-700';
+    if (lowerEvent.includes('fork')) return 'text-blue-700';
+    return 'text-purple-700';
   };
 
   const getBadgeColor = (event: string) => {
     const lowerEvent = event.toLowerCase();
-    if (lowerEvent.includes('exec')) return 'bg-green-100 text-green-800';
-    if (lowerEvent.includes('exit')) return 'bg-red-100 text-red-800';
-    if (lowerEvent.includes('fork')) return 'bg-blue-100 text-blue-800';
-    return 'bg-purple-100 text-purple-800';
+    if (lowerEvent.includes('exec')) return 'bg-green-100 text-green-900';
+    if (lowerEvent.includes('exit')) return 'bg-red-100 text-red-900';
+    if (lowerEvent.includes('fork')) return 'bg-blue-100 text-blue-900';
+    return 'bg-purple-100 text-purple-900';
   };
 
   const iconColor = getEventColor(eventType);

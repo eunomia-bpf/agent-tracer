@@ -12,11 +12,11 @@ interface PromptBlockProps {
 export function PromptBlock({ event, onToggle }: PromptBlockProps) {
   const { id, title, content, metadata, isExpanded } = event;
   
-  const truncatedContent = content.length > 150 
-    ? content.substring(0, 150) + '...' 
+  const truncatedContent = content.length > 300 
+    ? content.substring(0, 300) + '...' 
     : content;
 
-  const shouldShowExpandButton = content.length > 150;
+  const shouldShowExpandButton = content.length > 300;
 
   return (
     <div className="mb-1">

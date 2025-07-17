@@ -12,11 +12,11 @@ interface ResponseBlockProps {
 export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
   const { id, title, content, metadata, isExpanded } = event;
   
-  const truncatedContent = content.length > 200 
-    ? content.substring(0, 200) + '...' 
+  const truncatedContent = content.length > 300 
+    ? content.substring(0, 300) + '...' 
     : content;
 
-  const shouldShowExpandButton = content.length > 200;
+  const shouldShowExpandButton = content.length > 300;
 
   // Extract streaming info
   const isStreaming = metadata.event_count > 0;

@@ -12,15 +12,15 @@ interface FileBlockProps {
 export function FileBlock({ event, onToggle }: FileBlockProps) {
   const { id, title, content, metadata, isExpanded } = event;
   
-  const truncatedContent = content.length > 120 
-    ? content.substring(0, 120) + '...' 
+  const truncatedContent = content.length > 300 
+    ? content.substring(0, 300) + '...' 
     : content;
 
-  const shouldShowExpandButton = content.length > 120;
+  const shouldShowExpandButton = content.length > 300;
 
   // Extract file operation details
-  const operation = metadata.operation || 'file operation';
-  const path = metadata.path || 'unknown';
+  const operation = metadata.operation || metadata.event || 'file operation';
+  const path = metadata.path || metadata.filepath || 'unknown';
   const size = metadata.size;
   const fd = metadata.fd;
 
@@ -77,11 +77,9 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
                     {formatFileSize(size)}
                   </span>
                 )}
-                {path && path !== 'unknown' && (
-                  <span className="text-sm text-gray-700 font-mono truncate max-w-xs">
-                    {path}
-                  </span>
-                )}
+                <span className="text-sm text-gray-700 font-mono truncate max-w-md">
+                  {path}
+                </span>
               </div>
               
               <div className="flex items-center space-x-2">

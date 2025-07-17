@@ -21,21 +21,42 @@ export interface ParsedEvent {
 
 export interface PromptData {
   model?: string;
-  messages?: Array<{ role: string; content: string }>;
-  system?: Array<{ type: string; text: string }>;
+  messages?: Array<{ 
+    role: string; 
+    content: string | Array<any> | any;
+  }>;
+  system?: Array<{ 
+    type?: string; 
+    text?: string; 
+    cache_control?: any;
+  } | string>;
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  metadata?: {
+    user_id?: string;
+    [key: string]: any;
+  };
 }
 
 export interface ResponseData {
   message_id?: string;
+  connection_id?: string;
   model?: string;
   role?: string;
   content?: string;
+  duration_ns?: number;
+  event_count?: number;
+  function?: string;
+  has_message_start?: boolean;
+  start_time?: number;
+  end_time?: number;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    service_tier?: string;
   };
   sse_events?: Array<{
     event: string;
@@ -70,12 +91,83 @@ export interface FileData {
   comm?: string;
 }
 
+// Utility class for safe data extraction
+class DataExtractor {
+  private data: any;
+
+  constructor(data: any) {
+    this.data = data;
+  }
+
+  // Safely get nested values
+  get(path: string, defaultValue: any = undefined): any {
+    return path.split('.').reduce((obj, key) => {
+      return obj && obj[key] !== undefined ? obj[key] : defaultValue;
+    }, this.data);
+  }
+
+  // Try to parse JSON strings safely
+  parseJson(value: any): any {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+
+  // Convert any value to readable string, pretty printing JSON
+  toString(value: any, indent = 2): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value, null, indent);
+      } catch (error) {
+        // Fallback for circular references or other JSON errors
+        return String(value);
+      }
+    }
+    return String(value);
+  }
+
+  // Get prompt data from various nested structures
+  getPromptData(): any {
+    const candidates = [
+      this.parseJson(this.get('body')),
+      this.parseJson(this.get('data.data')),
+      this.get('data'),
+      this.data
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate && (candidate.model || candidate.messages || candidate.prompt)) {
+        return candidate;
+      }
+    }
+    return this.data;
+  }
+
+  // Get raw data for debugging/full visibility
+  getRawData(): string {
+    return this.toString(this.data, 2);
+  }
+
+  // Check if data seems to be AI-related but couldn't be parsed properly
+  isUnparsedAiData(): boolean {
+    const raw = this.toString(this.data).toLowerCase();
+    return raw.includes('model') || raw.includes('messages') || raw.includes('prompt') || 
+           raw.includes('temperature') || raw.includes('max_tokens') || raw.includes('anthropic') ||
+           raw.includes('openai') || raw.includes('claude');
+  }
+}
+
 // Parse different types of events
 export function parseEventData(event: Event): ParsedEvent {
-  const { id, timestamp, source, data } = event;
-  
-  // Determine event type based on source and data content
-  const eventType = determineEventType(source, data);
+  const eventType = determineEventType(event.source, event.data);
   
   switch (eventType) {
     case 'prompt':
@@ -94,81 +186,46 @@ export function parseEventData(event: Event): ParsedEvent {
 }
 
 function determineEventType(source: string, data: any): ParsedEvent['type'] {
-  // Check for AI prompts (requests to AI APIs)
   if (isPromptEvent(source, data)) return 'prompt';
-  
-  // Check for AI responses (responses from AI APIs)
   if (isResponseEvent(source, data)) return 'response';
-  
-  // Check for file operations
   if (isFileEvent(source, data)) return 'file';
-  
-  // Check for process events
   if (isProcessEvent(source, data)) return 'process';
-  
-  // Default to SSL for other SSL-related events
   if (source.toLowerCase().includes('ssl') || source === 'http_parser') return 'ssl';
-  
   return 'ssl';
 }
 
 function isPromptEvent(source: string, data: any): boolean {
-  // Check if this is an HTTP request to AI API endpoints
-  if (data.method === 'POST' && data.message_type === 'request') {
-    const path = data.path || '';
-    const host = data.host || data.headers?.host || '';
+  const extractor = new DataExtractor(data);
+  
+  if (extractor.get('method') === 'POST' && extractor.get('message_type') === 'request') {
+    const path = extractor.get('path', '');
+    const host = extractor.get('host') || extractor.get('headers.host', '');
     
-    // Common AI API endpoints
-    const aiEndpoints = [
-      'api.openai.com',
-      'api.anthropic.com',
-      'api.claude.ai',
-      'api.gemini.google.com',
-      'chat.googleapis.com'
-    ];
-    
-    const aiPaths = [
-      '/v1/chat/completions',
-      '/v1/completions',
-      '/v1/messages',
-      '/chat/completions'
-    ];
+    const aiEndpoints = ['api.openai.com', 'api.anthropic.com', 'api.claude.ai'];
+    const aiPaths = ['/v1/chat/completions', '/v1/completions', '/v1/messages'];
     
     if (aiEndpoints.some(endpoint => host.includes(endpoint)) || 
         aiPaths.some(apiPath => path.includes(apiPath))) {
       return true;
     }
     
-    // Check body content for AI-related data
-    if (data.body) {
-      try {
-        const bodyData = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-        return !!(bodyData.model || bodyData.messages || bodyData.prompt);
-      } catch {
-        return false;
-      }
-    }
+    const promptData = extractor.getPromptData();
+    return !!(promptData.model || promptData.messages || promptData.prompt);
   }
   
   return false;
 }
 
 function isResponseEvent(source: string, data: any): boolean {
-  // Check for SSE processor events (streaming responses)
-  if (source === 'sse_processor' && data.sse_events) {
+  const extractor = new DataExtractor(data);
+  
+  if (source === 'sse_processor' && extractor.get('sse_events')) {
     return true;
   }
   
-  // Check for HTTP responses from AI APIs
-  if (data.message_type === 'response' && data.status_code) {
-    const host = data.host || data.headers?.host || '';
-    const aiEndpoints = [
-      'api.openai.com',
-      'api.anthropic.com',
-      'api.claude.ai',
-      'api.gemini.google.com'
-    ];
-    
+  if (extractor.get('message_type') === 'response' && extractor.get('status_code')) {
+    const host = extractor.get('host') || extractor.get('headers.host', '');
+    const aiEndpoints = ['api.openai.com', 'api.anthropic.com', 'api.claude.ai'];
     return aiEndpoints.some(endpoint => host.includes(endpoint));
   }
   
@@ -176,247 +233,279 @@ function isResponseEvent(source: string, data: any): boolean {
 }
 
 function isFileEvent(source: string, data: any): boolean {
+  const extractor = new DataExtractor(data);
   return source === 'file' || 
-         (data.fd !== undefined) ||
-         (data.operation && ['open', 'read', 'write', 'close'].includes(data.operation)) ||
-         (data.event && data.event.includes('FILE_')) ||
-         (data.filepath !== undefined);
+         extractor.get('fd') !== undefined ||
+         (extractor.get('operation') && ['open', 'read', 'write', 'close'].includes(extractor.get('operation'))) ||
+         (extractor.get('event', '').includes('FILE_')) ||
+         extractor.get('filepath') !== undefined;
 }
 
 function isProcessEvent(source: string, data: any): boolean {
-  return (source === 'process' && !data.event?.includes('FILE_')) || 
-         (data.exec !== undefined) ||
-         (data.exit !== undefined) ||
-         (data.event === 'EXEC') ||
-         (data.event === 'EXIT') ||
-         (data.ppid !== undefined && !data.event?.includes('FILE_'));
+  const extractor = new DataExtractor(data);
+  return (source === 'process' && !extractor.get('event', '').includes('FILE_')) || 
+         extractor.get('exec') !== undefined ||
+         extractor.get('exit') !== undefined ||
+         extractor.get('event') === 'EXEC' ||
+         extractor.get('event') === 'EXIT' ||
+         (extractor.get('ppid') !== undefined && !extractor.get('event', '').includes('FILE_'));
 }
 
 function parsePromptEvent(event: Event): ParsedEvent {
-  const { data } = event;
-  let promptData: PromptData = {};
-  let title = 'AI Prompt';
-  let content = '';
+  const extractor = new DataExtractor(event.data);
+  const promptData = extractor.getPromptData();
   
-  try {
-    if (data.body) {
-      promptData = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-    }
-    
-    // Extract model and method info
-    const model = promptData.model || 'Unknown Model';
-    const method = data.method || 'POST';
-    const path = data.path || '';
-    
-    title = `${method} ${model}`;
-    
-    // Extract user message content
-    if (promptData.messages && promptData.messages.length > 0) {
-      const userMessages = promptData.messages
-        .filter(msg => msg.role === 'user')
-        .map(msg => msg.content)
-        .join('\n');
-      content = userMessages || 'No user message found';
-    } else if (promptData.system && promptData.system.length > 0) {
-      content = promptData.system.map(s => s.text || s).join('\n');
-    } else {
-      content = JSON.stringify(promptData, null, 2);
-    }
-  } catch (error) {
-    content = typeof data.body === 'string' ? data.body : JSON.stringify(data);
+  const model = promptData.model || 'Unknown Model';
+  const method = extractor.get('method', 'POST');
+  
+  const sections: string[] = [];
+  let hasStructuredData = false;
+  
+  // System messages
+  if (promptData.system?.length > 0) {
+    hasStructuredData = true;
+    sections.push('=== SYSTEM ===');
+    promptData.system.forEach((s: any) => {
+      if (typeof s === 'object' && s.text) {
+        sections.push(s.text);
+        if (s.cache_control) {
+          sections.push(`[Cache: ${extractor.toString(s.cache_control)}]`);
+        }
+      } else {
+        sections.push(extractor.toString(s));
+      }
+    });
+    sections.push('');
   }
   
+  // Messages
+  if (promptData.messages?.length > 0) {
+    hasStructuredData = true;
+    promptData.messages.forEach((msg: any) => {
+      sections.push(`=== ${msg.role.toUpperCase()} ===`);
+      sections.push(extractor.toString(msg.content));
+      sections.push('');
+    });
+  }
+  
+  // Parameters
+  const params: string[] = [];
+  if (promptData.temperature !== undefined) params.push(`temp: ${promptData.temperature}`);
+  if (promptData.max_tokens !== undefined) params.push(`max_tokens: ${promptData.max_tokens}`);
+  if (promptData.stream !== undefined) params.push(`stream: ${promptData.stream}`);
+  if (promptData.metadata?.user_id) params.push(`user: ${promptData.metadata.user_id.slice(0, 8)}...`);
+  
+  if (params.length > 0) {
+    hasStructuredData = true;
+    sections.push('=== PARAMETERS ===');
+    sections.push(params.join(', '));
+  }
+
+  // If we couldn't parse structured data but this looks like AI data, show raw data
+  if (!hasStructuredData || extractor.isUnparsedAiData()) {
+    sections.push('=== RAW DATA ===');
+    sections.push(extractor.getRawData());
+  }
+
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'prompt',
-    title,
-    content,
-    metadata: {
-      model: promptData.model,
-      temperature: promptData.temperature,
-      max_tokens: promptData.max_tokens,
-      url: `${data.host || ''}${data.path || ''}`,
-      method: data.method,
-      headers: data.headers
-    },
+    title: `${method} ${model}`,
+    content: sections.join('\n'),
+    metadata: { model, method, url: `${extractor.get('host', '')}${extractor.get('path', '')}`, ...promptData },
     isExpanded: false
   };
 }
 
 function parseResponseEvent(event: Event): ParsedEvent {
-  const { data } = event;
-  let responseData: ResponseData = data;
-  let title = 'AI Response';
-  let content = '';
+  const extractor = new DataExtractor(event.data);
   
-  try {
-    // Extract response content from SSE events
-    if (data.sse_events && Array.isArray(data.sse_events)) {
-      const textParts: string[] = [];
-      
-      data.sse_events.forEach((sseEvent: any) => {
-        if (sseEvent.parsed_data) {
-          // Handle different SSE event types
-          if (sseEvent.parsed_data.type === 'content_block_delta' && sseEvent.parsed_data.delta?.text) {
-            textParts.push(sseEvent.parsed_data.delta.text);
-          } else if (sseEvent.parsed_data.message?.content) {
-            // Handle complete message content
-            const msgContent = sseEvent.parsed_data.message.content;
-            if (Array.isArray(msgContent)) {
-              msgContent.forEach(item => {
-                if (item.text) textParts.push(item.text);
-              });
-            }
-          }
-        }
-      });
-      
-      content = textParts.join('') || data.text_content || 'Response received';
-      
-      // Get model info from message_start event
-      const messageStart = data.sse_events.find((e: any) => e.event === 'message_start');
-      if (messageStart?.parsed_data?.message?.model) {
-        title = `Response from ${messageStart.parsed_data.message.model}`;
+  let responseText = '';
+  let model = '';
+  let usage: any = null;
+  let hasStructuredData = false;
+  
+  if (extractor.get('sse_events')) {
+    const textParts: string[] = [];
+    
+    extractor.get('sse_events', []).forEach((sseEvent: any) => {
+      const parsed = sseEvent.parsed_data;
+      if (parsed?.type === 'content_block_delta' && parsed.delta?.text) {
+        textParts.push(parsed.delta.text);
+        hasStructuredData = true;
+      } else if (parsed?.type === 'message_start') {
+        model = parsed.message?.model || '';
+        usage = parsed.message?.usage;
+        hasStructuredData = true;
       }
-    } else if (data.text_content) {
-      content = data.text_content;
-    } else {
-      content = JSON.stringify(data, null, 2);
-    }
-  } catch (error) {
-    content = JSON.stringify(data, null, 2);
+    });
+    
+    responseText = textParts.join('');
+  } else {
+    responseText = extractor.get('text_content', '');
+    if (responseText) hasStructuredData = true;
   }
   
+  const sections: string[] = [];
+  
+  if (responseText) {
+    sections.push('=== RESPONSE ===');
+    sections.push(responseText);
+    sections.push('');
+  }
+  
+  // Metadata
+  const metadata: string[] = [];
+  if (extractor.get('message_id')) metadata.push(`id: ${extractor.get('message_id')}`);
+  if (extractor.get('duration_ns')) metadata.push(`duration: ${(extractor.get('duration_ns') / 1000000).toFixed(1)}ms`);
+  if (extractor.get('event_count')) metadata.push(`events: ${extractor.get('event_count')}`);
+  if (usage?.input_tokens) metadata.push(`in: ${usage.input_tokens}t`);
+  if (usage?.output_tokens) metadata.push(`out: ${usage.output_tokens}t`);
+  if (usage?.service_tier) metadata.push(`tier: ${usage.service_tier}`);
+  
+  if (metadata.length > 0) {
+    hasStructuredData = true;
+    sections.push('=== METADATA ===');
+    sections.push(metadata.join(', '));
+  }
+
+  // Always include raw data for responses to show full SSE structure
+  sections.push('=== RAW DATA ===');
+  sections.push(extractor.getRawData());
+
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'response',
-    title,
-    content,
-    metadata: {
-      message_id: data.message_id,
-      duration_ns: data.duration_ns,
-      event_count: data.event_count,
-      model: responseData.model,
-      usage: responseData.usage
-    },
+    title: model ? `Response from ${model}` : 'AI Response',
+    content: sections.join('\n'),
+    metadata: event.data,
     isExpanded: false
   };
 }
 
 function parseSSLEvent(event: Event): ParsedEvent {
-  const { data } = event;
-  const sslData: SSLData = data;
+  const extractor = new DataExtractor(event.data);
   
-  const method = sslData.method || 'UNKNOWN';
-  const path = sslData.path || '/';
-  const host = sslData.host || sslData.headers?.host || 'unknown';
-  const statusCode = sslData.status_code;
+  const method = extractor.get('method', 'UNKNOWN');
+  const host = extractor.get('host') || extractor.get('headers.host', 'unknown');
+  const path = extractor.get('path', '/');
+  const statusCode = extractor.get('status_code');
   
   let title = `${method} ${host}${path}`;
-  if (statusCode) {
-    title += ` (${statusCode})`;
+  if (statusCode) title += ` (${statusCode})`;
+  
+  const sections: string[] = [];
+  
+  // Show body if available
+  const body = extractor.get('body');
+  if (body) {
+    sections.push('=== BODY ===');
+    sections.push(extractor.toString(body));
+    sections.push('');
   }
   
-  const content = sslData.body || JSON.stringify(data, null, 2);
-  
+  // Always show full raw data for SSL events
+  sections.push('=== RAW DATA ===');
+  sections.push(extractor.getRawData());
+
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'ssl',
     title,
-    content,
-    metadata: {
-      method: sslData.method,
-      path: sslData.path,
-      host: host,
-      status_code: sslData.status_code,
-      content_length: sslData.content_length,
-      headers: sslData.headers,
-      message_type: sslData.message_type
-    },
+    content: sections.join('\n'),
+    metadata: event.data,
     isExpanded: false
   };
 }
 
 function parseFileEvent(event: Event): ParsedEvent {
-  const { data } = event;
-  const fileData: FileData = data;
+  const extractor = new DataExtractor(event.data);
   
-  const operation = fileData.operation || data.event || 'file operation';
-  const path = fileData.path || data.filepath || 'unknown path';
+  const operation = extractor.get('operation') || extractor.get('event', 'file op');
+  const path = extractor.get('path') || extractor.get('filepath', 'unknown');
   
-  const title = `${operation} ${path}`;
-  const content = JSON.stringify(data, null, 2);
+  const sections: string[] = [];
+  sections.push(`=== ${operation.toUpperCase()} ===`);
+  sections.push(`Path: ${path}`);
   
+  const metadata: string[] = [];
+  if (extractor.get('size') !== undefined) metadata.push(`size: ${extractor.get('size')}`);
+  if (extractor.get('fd') !== undefined) metadata.push(`fd: ${extractor.get('fd')}`);
+  if (extractor.get('flags') !== undefined) metadata.push(`flags: ${extractor.get('flags')}`);
+  if (extractor.get('permissions')) metadata.push(`perms: ${extractor.get('permissions')}`);
+  
+  if (metadata.length > 0) {
+    sections.push('');
+    sections.push('=== DETAILS ===');
+    sections.push(metadata.join(', '));
+  }
+
+  // Show raw data for complete visibility
+  sections.push('');
+  sections.push('=== RAW DATA ===');
+  sections.push(extractor.getRawData());
+
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'file',
-    title,
-    content,
-    metadata: {
-      operation: fileData.operation || data.event,
-      path: fileData.path || data.filepath,
-      size: fileData.size,
-      fd: fileData.fd,
-      permissions: fileData.permissions,
-      flags: data.flags,
-      count: data.count,
-      pid: data.pid,
-      comm: data.comm
-    },
+    title: `${operation} ${path}`,
+    content: sections.join('\n'),
+    metadata: event.data,
     isExpanded: false
   };
 }
 
 function parseProcessEvent(event: Event): ParsedEvent {
-  const { data } = event;
+  const extractor = new DataExtractor(event.data);
   
-  let title = 'Process Event';
-  if (data.event === 'EXEC') {
-    title = `exec: ${data.filename || data.exec || 'unknown'}`;
-  } else if (data.event === 'EXIT') {
-    title = `exit: code ${data.exit_code || data.exit || 'unknown'}`;
-  } else if (data.exec) {
-    title = `exec: ${data.exec}`;
-  } else if (data.exit) {
-    title = `exit: code ${data.exit}`;
-  } else if (data.ppid) {
-    title = `child of PID ${data.ppid}`;
-  }
+  const eventType = extractor.get('event', 'process');
+  const filename = extractor.get('filename');
+  const pid = extractor.get('pid');
+  const ppid = extractor.get('ppid');
   
-  const content = JSON.stringify(data, null, 2);
+  const sections: string[] = [];
+  sections.push(`=== ${eventType.toUpperCase()} ===`);
   
+  if (filename) sections.push(`Executable: ${filename}`);
+  if (pid) sections.push(`PID: ${pid}`);
+  if (ppid) sections.push(`Parent PID: ${ppid}`);
+  
+  // Show raw data for complete visibility
+  sections.push('');
+  sections.push('=== RAW DATA ===');
+  sections.push(extractor.getRawData());
+  
+  const title = filename ? `${eventType}: ${filename}` : `${eventType} event`;
+
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'process',
     title,
-    content,
-    metadata: {
-      event: data.event,
-      filename: data.filename,
-      pid: data.pid,
-      ppid: data.ppid,
-      comm: data.comm,
-      exec: data.exec,
-      exit: data.exit,
-      exit_code: data.exit_code,
-      timestamp: data.timestamp
-    },
+    content: sections.join('\n'),
+    metadata: event.data,
     isExpanded: false
   };
 }
 
 function parseGenericEvent(event: Event): ParsedEvent {
+  const extractor = new DataExtractor(event.data);
+  
+  const sections: string[] = [];
+  sections.push(`=== ${event.source.toUpperCase()} EVENT ===`);
+  sections.push('=== RAW DATA ===');
+  sections.push(extractor.getRawData());
+  
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'ssl',
     title: `${event.source} event`,
-    content: JSON.stringify(event.data, null, 2),
+    content: sections.join('\n'),
     metadata: event.data,
     isExpanded: false
   };
