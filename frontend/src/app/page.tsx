@@ -12,7 +12,7 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [logContent, setLogContent] = useState<string>('');
   const [events, setEvents] = useState<Event[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>('log');
+  const [viewMode, setViewMode] = useState<ViewMode>('process-tree');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [isParsed, setIsParsed] = useState(false);
