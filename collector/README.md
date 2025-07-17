@@ -35,8 +35,8 @@ sudo apt-get update
 sudo apt-get install -y clang llvm libelf-dev
 
 # Clone and build
-git clone <repository>
-cd agent-tracer/collector
+git clone https://github.com/eunomia-bpf/agentsight.git --recursive
+cd agentsight/collector
 cargo build --release
 ```
 
@@ -44,13 +44,16 @@ cargo build --release
 
 ```bash
 # SSL traffic monitoring with HTTP parsing
-sudo ./target/release/collector ssl --http-parser
+cargo run ssl --http-parser
 
 # Process lifecycle monitoring
-sudo ./target/release/collector process
+cargo run process
 
 # Combined agent monitoring
-sudo ./target/release/collector agent --comm python --pid 1234
+cargo run agent -- --comm python --pid 1234
+
+# Web interface with embedded frontend
+cargo run server
 ```
 
 ## Commands
@@ -61,19 +64,19 @@ Monitor SSL/TLS traffic with advanced processing capabilities:
 
 ```bash
 # Basic SSL monitoring
-sudo collector ssl
+cargo run ssl
 
 # Enable Server-Sent Events processing
-sudo collector ssl --sse-merge
+cargo run ssl --sse-merge
 
 # Enable HTTP parsing with raw data
-sudo collector ssl --http-parser --http-raw-data
+cargo run ssl --http-parser --http-raw-data
 
 # Apply filters to reduce noise
-sudo collector ssl --http-parser --http-filter "GET /health" --ssl-filter "handshake"
+cargo run ssl --http-parser --http-filter "GET /health" --ssl-filter "handshake"
 
 # Pass arguments to underlying eBPF program
-sudo collector ssl -- --port 443 --interface eth0
+cargo run ssl -- --port 443 --comm python
 ```
 
 ### Process Monitoring
@@ -82,16 +85,16 @@ Track process lifecycle events:
 
 ```bash
 # Basic process monitoring
-sudo collector process
+cargo run process
 
 # Filter by process name
-sudo collector process -- --comm python
+cargo run process -- --comm python
 
 # Filter by PID
-sudo collector process -- --pid 1234
+cargo run process -- --pid 1234
 
 # Quiet mode (no console output)
-sudo collector process --quiet
+cargo run process --quiet
 ```
 
 ### Agent Monitoring (Combined)
@@ -100,22 +103,25 @@ Comprehensive monitoring with both SSL and process events:
 
 ```bash
 # Full agent monitoring
-sudo collector agent
+cargo run agent
 
 # Filter by process command
-sudo collector agent --comm python
+cargo run agent --comm python
 
 # SSL-only monitoring
-sudo collector agent --process false
+cargo run agent --process false
 
 # Process-only monitoring
-sudo collector agent --ssl false
+cargo run agent --ssl false
 
 # Advanced filtering
-sudo collector agent --pid 1234 --ssl-uid 1000 --http-filter "POST /api"
+cargo run agent --pid 1234 --ssl-uid 1000 --http-filter "POST /api"
 
 # Custom output file
-sudo collector agent --output /var/log/agent.log --quiet
+cargo run agent --output /var/log/agent.log --quiet
+
+# Web server with visualization
+cargo run server
 ```
 
 ## Configuration Options
@@ -207,30 +213,33 @@ pub struct Event {
 
 ```bash
 # Monitor HTTPS traffic with HTTP parsing
-sudo collector ssl --http-parser --http-filter "POST /api" -- --port 443
+cargo run ssl --http-parser --http-filter "POST /api" -- --port 443
 
-# Monitor multiple ports
-sudo collector ssl --sse-merge -- --port 80 --port 443
+# Monitor Python processes with SSL
+cargo run ssl --sse-merge -- --comm python
 ```
 
 ### Process Lifecycle Tracking
 
 ```bash
 # Monitor Python processes
-sudo collector process -- --comm python --duration 1000
+cargo run process -- --comm python --duration 1000
 
 # Monitor specific PID
-sudo collector process -- --pid 1234
+cargo run process -- --pid 1234
 ```
 
 ### Combined Monitoring
 
 ```bash
 # Monitor web application
-sudo collector agent --comm nginx --ssl-uid 33 --http-filter "GET /metrics"
+cargo run agent --comm nginx --ssl-uid 33 --http-filter "GET /metrics"
 
-# Full system monitoring
-sudo collector agent --output /var/log/system.log --quiet
+# Full system monitoring with web interface
+cargo run server
+
+# Log to file with quiet mode
+cargo run agent --output /var/log/system.log --quiet
 ```
 
 ## Development
@@ -295,7 +304,7 @@ let process_path = binary_extractor.get_process_path();
 RUST_LOG=debug cargo run ssl --http-parser
 
 # Verbose eBPF program output
-sudo collector ssl -- --verbose
+cargo run ssl -- --verbose
 ```
 
 ## Requirements
@@ -325,10 +334,34 @@ sudo collector ssl -- --verbose
 
 [License information would go here]
 
+## Server Mode
+
+The collector includes an embedded web server with frontend for visualization:
+
+```bash
+# Start web server with embedded frontend
+cargo run server
+
+# Access web interface
+# http://localhost:8080/timeline
+```
+
+### Web Interface Features
+
+- **Timeline View**: Interactive event timeline with zoom and filtering
+- **Process Tree**: Hierarchical process visualization
+- **Log View**: Raw event inspection with JSON formatting
+- **Real-time Updates**: Live data streaming and analysis
+
 ## Related Projects
 
 - **AgentSight**: Complete observability framework
-- **eBPF Programs**: Low-level monitoring components (`../src/`)
-- **Frontend**: Web interface for visualization (`../frontend/`)
+- **Frontend**: React/TypeScript web interface (`../frontend/`)
 - **Analysis Tools**: Python utilities for data processing (`../script/`)
- 
+- **Documentation**: Comprehensive guides and examples (`../docs/`)
+
+## Package Information
+
+- **Package Name**: `agentsight`
+- **Repository**: https://github.com/eunomia-bpf/agentsight
+- **Binary Name**: `agentsight` (after `cargo build --release`)
