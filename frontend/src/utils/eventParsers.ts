@@ -59,9 +59,15 @@ export interface SSLData {
 export interface FileData {
   operation?: string;
   path?: string;
+  filepath?: string;
+  event?: string;
   size?: number;
   permissions?: string;
   fd?: number;
+  flags?: number;
+  count?: number;
+  pid?: number;
+  comm?: string;
 }
 
 // Parse different types of events
@@ -172,14 +178,18 @@ function isResponseEvent(source: string, data: any): boolean {
 function isFileEvent(source: string, data: any): boolean {
   return source === 'file' || 
          (data.fd !== undefined) ||
-         (data.operation && ['open', 'read', 'write', 'close'].includes(data.operation));
+         (data.operation && ['open', 'read', 'write', 'close'].includes(data.operation)) ||
+         (data.event && data.event.includes('FILE_')) ||
+         (data.filepath !== undefined);
 }
 
 function isProcessEvent(source: string, data: any): boolean {
-  return source === 'process' || 
+  return (source === 'process' && !data.event?.includes('FILE_')) || 
          (data.exec !== undefined) ||
          (data.exit !== undefined) ||
-         (data.ppid !== undefined);
+         (data.event === 'EXEC') ||
+         (data.event === 'EXIT') ||
+         (data.ppid !== undefined && !data.event?.includes('FILE_'));
 }
 
 function parsePromptEvent(event: Event): ParsedEvent {
@@ -334,8 +344,8 @@ function parseFileEvent(event: Event): ParsedEvent {
   const { data } = event;
   const fileData: FileData = data;
   
-  const operation = fileData.operation || 'file operation';
-  const path = fileData.path || 'unknown path';
+  const operation = fileData.operation || data.event || 'file operation';
+  const path = fileData.path || data.filepath || 'unknown path';
   
   const title = `${operation} ${path}`;
   const content = JSON.stringify(data, null, 2);
@@ -347,11 +357,15 @@ function parseFileEvent(event: Event): ParsedEvent {
     title,
     content,
     metadata: {
-      operation: fileData.operation,
-      path: fileData.path,
+      operation: fileData.operation || data.event,
+      path: fileData.path || data.filepath,
       size: fileData.size,
       fd: fileData.fd,
-      permissions: fileData.permissions
+      permissions: fileData.permissions,
+      flags: data.flags,
+      count: data.count,
+      pid: data.pid,
+      comm: data.comm
     },
     isExpanded: false
   };
@@ -361,7 +375,11 @@ function parseProcessEvent(event: Event): ParsedEvent {
   const { data } = event;
   
   let title = 'Process Event';
-  if (data.exec) {
+  if (data.event === 'EXEC') {
+    title = `exec: ${data.filename || data.exec || 'unknown'}`;
+  } else if (data.event === 'EXIT') {
+    title = `exit: code ${data.exit_code || data.exit || 'unknown'}`;
+  } else if (data.exec) {
     title = `exec: ${data.exec}`;
   } else if (data.exit) {
     title = `exit: code ${data.exit}`;
@@ -377,7 +395,17 @@ function parseProcessEvent(event: Event): ParsedEvent {
     type: 'process',
     title,
     content,
-    metadata: data,
+    metadata: {
+      event: data.event,
+      filename: data.filename,
+      pid: data.pid,
+      ppid: data.ppid,
+      comm: data.comm,
+      exec: data.exec,
+      exit: data.exit,
+      exit_code: data.exit_code,
+      timestamp: data.timestamp
+    },
     isExpanded: false
   };
 }
