@@ -10,7 +10,7 @@ mod server;
 use framework::{
     binary_extractor::BinaryExtractor,
     runners::{SslRunner, ProcessRunner, AgentRunner, RunnerError, Runner},
-    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, SSLFilter, print_global_http_filter_metrics}
+    analyzers::{OutputAnalyzer, FileLogger, SSEProcessor, HTTPParser, HTTPFilter, AuthHeaderRemover, SSLFilter, print_global_http_filter_metrics}
 };
 
 use server::WebServer;
@@ -60,6 +60,9 @@ enum Commands {
         /// HTTP filter patterns to exclude events (can be used multiple times)
         #[arg(long)]
         http_filter: Vec<String>,
+        /// Disable authorization header removal from HTTP traffic
+        #[arg(long)]
+        disable_auth_removal: bool,
         /// SSL filter patterns to exclude events (can be used multiple times)
         #[arg(long)]
         ssl_filter: Vec<String>,
@@ -131,6 +134,9 @@ enum Commands {
         /// HTTP filters (applied to SSL runner after HTTP parsing)
         #[arg(long)]
         http_filter: Vec<String>,
+        /// Disable authorization header removal from HTTP traffic
+        #[arg(long)]
+        disable_auth_removal: bool,
         /// Output file
         #[arg(short = 'o', long, default_value = "agent.log")]
         output: Option<String>,
@@ -162,9 +168,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, ssl_filter, quiet, server, server_port, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, ssl_filter, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
+        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, disable_auth_removal, ssl_filter, quiet, server, server_port, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, *disable_auth_removal, ssl_filter, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, server, server_port, args } => run_raw_process(&binary_extractor, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
-        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, output, quiet, server, server_port } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, output.as_deref(), *quiet, *server, *server_port).await.map_err(convert_runner_error)?,
+        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, disable_auth_removal, output, quiet, server, server_port } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, *disable_auth_removal, output.as_deref(), *quiet, *server, *server_port).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
@@ -172,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, ssl_filter_patterns: &Vec<String>, quiet: bool, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, disable_auth_removal: bool, ssl_filter_patterns: &Vec<String>, quiet: bool, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -206,6 +212,11 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
         // Add HTTP filter if patterns are provided
         if !http_filter_patterns.is_empty() {
             ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPFilter::with_patterns(http_filter_patterns.clone())));
+        }
+        
+        // Add authorization header remover by default (unless disabled)
+        if !disable_auth_removal {
+            ssl_runner = ssl_runner.add_analyzer(Box::new(AuthHeaderRemover::new()));
         }
         
         let raw_data_info = if include_raw_data { " (with raw data)" } else { "" };
@@ -300,6 +311,7 @@ async fn run_agent(
     duration: Option<u32>,
     mode: Option<u32>,
     http_filter: &[String],
+    disable_auth_removal: bool,
     output: Option<&str>,
     quiet: bool,
     enable_server: bool,
@@ -353,6 +365,11 @@ async fn run_agent(
             // Add HTTP filter to SSL runner if patterns are provided
             if !http_filter.is_empty() {
                 ssl_runner = ssl_runner.add_analyzer(Box::new(HTTPFilter::with_patterns(http_filter.to_vec())));
+            }
+            
+            // Add authorization header remover by default (unless disabled)
+            if !disable_auth_removal {
+                ssl_runner = ssl_runner.add_analyzer(Box::new(AuthHeaderRemover::new()));
             }
         }
         

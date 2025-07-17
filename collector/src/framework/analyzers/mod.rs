@@ -20,6 +20,7 @@ pub mod file_logger;
 pub mod sse_processor;
 pub mod http_parser;
 pub mod http_filter;
+pub mod auth_header_remover;
 pub mod ssl_filter;
 pub mod event;
 
@@ -31,6 +32,7 @@ pub use file_logger::FileLogger;
 pub use sse_processor::SSEProcessor;
 pub use http_parser::HTTPParser;
 pub use http_filter::{HTTPFilter, print_global_http_filter_metrics};
+pub use auth_header_remover::AuthHeaderRemover;
 pub use ssl_filter::SSLFilter;
 
 #[cfg(test)]
