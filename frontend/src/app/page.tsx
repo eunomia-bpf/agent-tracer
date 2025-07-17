@@ -116,7 +116,7 @@ export default function Home() {
     }
   };
 
-  // Load data from localStorage on component mount and try to sync
+  // Load data from localStorage on component mount
   useEffect(() => {
     const savedContent = localStorage.getItem('agent-tracer-log');
     const savedEvents = localStorage.getItem('agent-tracer-events');
@@ -125,11 +125,9 @@ export default function Home() {
       setLogContent(savedContent);
       setEvents(JSON.parse(savedEvents));
       setIsParsed(true);
-    } else {
-      // Try to sync data on initial load if no local data
-      syncData();
     }
-  }, [syncData]);
+    // Auto-sync disabled - user must manually sync data
+  }, []);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = event.target.files?.[0];
