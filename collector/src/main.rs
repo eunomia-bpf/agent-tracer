@@ -84,6 +84,9 @@ enum Commands {
         /// Server port (used with --server)
         #[arg(long, default_value = "8080")]
         server_port: u16,
+        /// Log file to serve via API (used with --server)
+        #[arg(long)]
+        log_file: Option<String>,
         /// Additional arguments to pass to the SSL binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -105,6 +108,9 @@ enum Commands {
         /// Server port (used with --server)
         #[arg(long, default_value = "8080")]
         server_port: u16,
+        /// Log file to serve via API (used with --server)
+        #[arg(long)]
+        log_file: Option<String>,
         /// Additional arguments to pass to the process binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -170,6 +176,9 @@ enum Commands {
         /// Server port (used with --server)
         #[arg(long, default_value = "8080")]
         server_port: u16,
+        /// Log file to serve via API (used with --server)
+        #[arg(long)]
+        log_file: Option<String>,
     },
     /// Record agent activity with optimized filters and settings
     /// Equivalent to: trace -c claude --http-filter "request.path_prefix=/v1/rgstr | response.status_code=202 | request.method=HEAD | response.body=" --ssl-filter "data=0\\r\\n\\r\\n|data.type=binary" -q --server
@@ -189,6 +198,9 @@ enum Commands {
         /// Server port (used with --server, always enabled)
         #[arg(long, default_value = "8080")]
         server_port: u16,
+        /// Log file to serve via API (defaults to record.log)
+        #[arg(long)]
+        log_file: Option<String>,
     },
 }
 
@@ -208,10 +220,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_extractor = BinaryExtractor::new().await?;
     
     match &cli.command {
-        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, disable_auth_removal, ssl_filter, quiet, rotate_logs, max_log_size, server, server_port, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, *disable_auth_removal, ssl_filter, *quiet, *rotate_logs, *max_log_size, *server, *server_port, args).await.map_err(convert_runner_error)?,
-        Commands::Process { quiet, rotate_logs, max_log_size, server, server_port, args } => run_raw_process(&binary_extractor, *quiet, *rotate_logs, *max_log_size, *server, *server_port, args).await.map_err(convert_runner_error)?,
-        Commands::Trace { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, disable_auth_removal, output, quiet, rotate_logs, max_log_size, server, server_port } => run_trace(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, *disable_auth_removal, output.as_deref(), *quiet, *rotate_logs, *max_log_size, *server, *server_port).await.map_err(convert_runner_error)?,
-        Commands::Record { comm, output, rotate_logs, max_log_size, server_port } => {
+        Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, disable_auth_removal, ssl_filter, quiet, rotate_logs, max_log_size, server, server_port, log_file, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, *disable_auth_removal, ssl_filter, *quiet, *rotate_logs, *max_log_size, *server, *server_port, log_file.as_deref(), args).await.map_err(convert_runner_error)?,
+        Commands::Process { quiet, rotate_logs, max_log_size, server, server_port, log_file, args } => run_raw_process(&binary_extractor, *quiet, *rotate_logs, *max_log_size, *server, *server_port, log_file.as_deref(), args).await.map_err(convert_runner_error)?,
+        Commands::Trace { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, disable_auth_removal, output, quiet, rotate_logs, max_log_size, server, server_port, log_file } => run_trace(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, *disable_auth_removal, output.as_deref(), *quiet, *rotate_logs, *max_log_size, *server, *server_port, log_file.as_deref()).await.map_err(convert_runner_error)?,
+        Commands::Record { comm, output, rotate_logs, max_log_size, server_port, log_file } => {
             // Predefined filter patterns optimized for agent monitoring
             let http_filter_patterns = vec![
                 "request.path_prefix=/v1/rgstr | response.status_code=202 | request.method=HEAD | response.body=".to_string(),
@@ -220,7 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "data=0\\r\\n\\r\\n | data.type=binary".to_string(),
             ];
             
-            run_trace(&binary_extractor, true, None, None, Some(comm), &ssl_filter_patterns, false, true, false, true, None, None, &http_filter_patterns, false, Some(output), true, *rotate_logs, *max_log_size, true, *server_port).await.map_err(convert_runner_error)?
+            run_trace(&binary_extractor, true, None, None, Some(comm), &ssl_filter_patterns, false, true, false, true, None, None, &http_filter_patterns, false, Some(output), true, *rotate_logs, *max_log_size, true, *server_port, log_file.as_deref().or(Some(output))).await.map_err(convert_runner_error)?
         },
     }
     
@@ -229,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
 /// Show raw SSL events as JSON with optional chunk merging and HTTP parsing
-async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, disable_auth_removal: bool, ssl_filter_patterns: &Vec<String>, quiet: bool, rotate_logs: bool, max_log_size: u64, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bool, enable_http_parser: bool, include_raw_data: bool, http_filter_patterns: &Vec<String>, disable_auth_removal: bool, ssl_filter_patterns: &Vec<String>, quiet: bool, rotate_logs: bool, max_log_size: u64, enable_server: bool, server_port: u16, log_file: Option<&str>, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw SSL Events");
     println!("{}", "=".repeat(60));
     
@@ -297,7 +309,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
     }
     
     // Start web server if enabled
-    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, log_file.or(Some("ssl.log")), event_sender.clone()).await
         .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
     
     let mut stream = ssl_runner.run().await?;
@@ -314,7 +326,7 @@ async fn run_raw_ssl(binary_extractor: &BinaryExtractor, enable_chunk_merger: bo
 }
 
 /// Show raw process events as JSON
-async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, rotate_logs: bool, max_log_size: u64, enable_server: bool, server_port: u16, args: &Vec<String>) -> Result<(), RunnerError> {
+async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, rotate_logs: bool, max_log_size: u64, enable_server: bool, server_port: u16, log_file: Option<&str>, args: &Vec<String>) -> Result<(), RunnerError> {
     println!("Raw Process Events");
     println!("{}", "=".repeat(60));
     
@@ -342,7 +354,7 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, rotate
         ));
     
     // Start web server if enabled
-    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, log_file.or(Some("ssl.log")), event_sender.clone()).await
         .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
     
     println!("Starting process event stream with raw JSON output (press Ctrl+C to stop):");
@@ -381,6 +393,7 @@ async fn run_trace(
     max_log_size: u64,
     enable_server: bool,
     server_port: u16,
+    log_file: Option<&str>,
 ) -> Result<(), RunnerError> {
     println!("Trace Monitoring");
     println!("{}", "=".repeat(60));
@@ -499,7 +512,7 @@ async fn run_trace(
     println!("Press Ctrl+C to stop");
     
     // Start web server if enabled
-    let _server_handle = start_web_server_if_enabled(enable_server, server_port, event_sender.clone()).await
+    let _server_handle = start_web_server_if_enabled(enable_server, server_port, log_file.or(Some("ssl.log")), event_sender.clone()).await
         .map_err(|e| RunnerError::from(format!("Failed to start server: {}", e)))?;
     
     let mut stream = agent.run().await?;
@@ -520,6 +533,7 @@ async fn run_trace(
 async fn start_web_server_if_enabled(
     enable_server: bool,
     port: u16,
+    log_file: Option<&str>,
     event_sender: broadcast::Sender<crate::framework::core::Event>,
 ) -> Result<Option<tokio::task::JoinHandle<()>>, Box<dyn std::error::Error>> {
     if !enable_server {
@@ -529,7 +543,7 @@ async fn start_web_server_if_enabled(
     let addr = format!("127.0.0.1:{}", port).parse()
         .map_err(|e| format!("Invalid server address: {}", e))?;
     
-    let web_server = WebServer::new(event_sender).map_err(|e| format!("Failed to create web server: {}", e))?;
+    let web_server = WebServer::new(event_sender, log_file).map_err(|e| format!("Failed to create web server: {}", e))?;
     
     println!("🌐 Starting web server on http://{}", addr);
     println!("   Frontend will be available once the server starts");

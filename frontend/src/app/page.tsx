@@ -129,7 +129,7 @@ export default function Home() {
       // Try to sync data on initial load if no local data
       syncData();
     }
-  }, []);
+  }, [syncData]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = event.target.files?.[0];
@@ -169,7 +169,7 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Agent Tracer Log Analyzer
+            AgentSight Analyzer
           </h1>
           <p className="text-gray-600">
             Upload and analyze eBPF agent trace logs with dual view modes
