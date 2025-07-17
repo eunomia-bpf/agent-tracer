@@ -95,7 +95,7 @@ enum Commands {
         args: Vec<String>,
     },
     /// Combined SSL and Process monitoring with configurable options
-    Agent {
+    Trace {
         /// Enable SSL monitoring
         #[arg(long, action = clap::ArgAction::Set, default_value = "true")]
         ssl: bool,
@@ -138,7 +138,7 @@ enum Commands {
         #[arg(long)]
         disable_auth_removal: bool,
         /// Output file
-        #[arg(short = 'o', long, default_value = "agent.log")]
+        #[arg(short = 'o', long, default_value = "trace.log")]
         output: Option<String>,
         /// Suppress console output
         #[arg(short, long)]
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
         Commands::Ssl { sse_merge, http_parser, http_raw_data, http_filter, disable_auth_removal, ssl_filter, quiet, server, server_port, args } => run_raw_ssl(&binary_extractor, *sse_merge, *http_parser, *http_raw_data, http_filter, *disable_auth_removal, ssl_filter, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
         Commands::Process { quiet, server, server_port, args } => run_raw_process(&binary_extractor, *quiet, *server, *server_port, args).await.map_err(convert_runner_error)?,
-        Commands::Agent { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, disable_auth_removal, output, quiet, server, server_port } => run_agent(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, *disable_auth_removal, output.as_deref(), *quiet, *server, *server_port).await.map_err(convert_runner_error)?,
+        Commands::Trace { ssl, ssl_uid, pid, comm, ssl_filter, ssl_handshake, ssl_http, ssl_raw_data, process, duration, mode, http_filter, disable_auth_removal, output, quiet, server, server_port } => run_trace(&binary_extractor, *ssl, *pid, *ssl_uid, comm.as_deref(), ssl_filter, *ssl_handshake, *ssl_http, *ssl_raw_data, *process, *duration, *mode, http_filter, *disable_auth_removal, output.as_deref(), *quiet, *server, *server_port).await.map_err(convert_runner_error)?,
     }
     
     Ok(())
@@ -296,8 +296,8 @@ async fn run_raw_process(binary_extractor: &BinaryExtractor, quiet: bool, enable
     Ok(())
 }
 
-/// Agent monitoring with configurable runners and analyzers
-async fn run_agent(
+/// Trace monitoring with configurable runners and analyzers
+async fn run_trace(
     binary_extractor: &BinaryExtractor,
     ssl_enabled: bool,
     pid: Option<u32>,
@@ -317,13 +317,13 @@ async fn run_agent(
     enable_server: bool,
     server_port: u16,
 ) -> Result<(), RunnerError> {
-    println!("Agent Monitoring");
+    println!("Trace Monitoring");
     println!("{}", "=".repeat(60));
     
     // Set up event broadcasting for server if enabled
     let (event_sender, _event_receiver) = broadcast::channel(1000);
     
-    let mut agent = AgentRunner::new("agent");
+    let mut agent = AgentRunner::new("trace");
     
     // Add SSL runner if enabled
     if ssl_enabled {
@@ -423,7 +423,7 @@ async fn run_agent(
     }
     
     println!("{}", "=".repeat(60));
-    println!("Starting flexible agent monitoring with {} runners and {} global analyzers...", 
+    println!("Starting flexible trace monitoring with {} runners and {} global analyzers...", 
              agent.runner_count(), agent.analyzer_count());
     println!("Press Ctrl+C to stop");
     

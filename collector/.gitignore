@@ -5,3 +5,4 @@ res.txt
 process.log
 ssl.log
 agent.log
+trace.log
