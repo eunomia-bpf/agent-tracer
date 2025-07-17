@@ -160,7 +160,7 @@ export function ProcessTreeFiltersComponent({
                       onChange={() => toggleArrayFilter('eventTypes', type)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="capitalize">{type}</span>
+                    <span className="capitalize text-gray-900">{type}</span>
                   </label>
                 ))}
               </div>
@@ -180,7 +180,7 @@ export function ProcessTreeFiltersComponent({
                       onChange={() => toggleArrayFilter('models', model)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="truncate">{model}</span>
+                    <span className="truncate text-gray-900">{model}</span>
                   </label>
                 ))}
               </div>
@@ -200,7 +200,7 @@ export function ProcessTreeFiltersComponent({
                       onChange={() => toggleArrayFilter('sources', source)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span>{source}</span>
+                    <span className="text-gray-900">{source}</span>
                   </label>
                 ))}
               </div>
@@ -220,7 +220,7 @@ export function ProcessTreeFiltersComponent({
                       onChange={() => toggleArrayFilter('commands', command)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="font-mono text-xs">{command}</span>
+                    <span className="font-mono text-xs text-gray-900">{command}</span>
                   </label>
                 ))}
               </div>

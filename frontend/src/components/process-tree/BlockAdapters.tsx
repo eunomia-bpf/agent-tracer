@@ -1,5 +1,5 @@
 import { ParsedEvent } from '@/utils/eventParsers';
-import { UnifiedBlockData, BlockField } from './UnifiedBlock';
+import { UnifiedBlockData } from './UnifiedBlock';
 import { 
   SparklesIcon, 
   CheckCircleIcon, 
