@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { LogView } from '@/components/LogView';
 import { TimelineView } from '@/components/TimelineView';
+import { ProcessTreeView } from '@/components/ProcessTreeView';
 import { Event } from '@/types/event';
 
-type ViewMode = 'log' | 'timeline';
+type ViewMode = 'log' | 'timeline' | 'process-tree';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -246,6 +247,16 @@ export default function Home() {
                     >
                       Timeline View
                     </button>
+                    <button
+                      onClick={() => setViewMode('process-tree')}
+                      className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                        viewMode === 'process-tree'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      Process Tree
+                    </button>
                   </div>
                   
                   <button
@@ -261,8 +272,10 @@ export default function Home() {
             {/* View Content */}
             {viewMode === 'log' ? (
               <LogView events={events} />
-            ) : (
+            ) : viewMode === 'timeline' ? (
               <TimelineView events={events} />
+            ) : (
+              <ProcessTreeView events={events} />
             )}
           </div>
         )}
