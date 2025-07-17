@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
-const PROCESS_BINARY: &[u8] = include_bytes!("../../../src/process");
-const SSLSNIFF_BINARY: &[u8] = include_bytes!("../../../src/sslsniff");
+const PROCESS_BINARY: &[u8] = include_bytes!("../../../bpf/process");
+const SSLSNIFF_BINARY: &[u8] = include_bytes!("../../../bpf/sslsniff");
 
 pub struct BinaryExtractor {
     _temp_dir: TempDir, // Keep alive to prevent cleanup

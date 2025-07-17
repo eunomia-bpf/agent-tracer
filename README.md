@@ -106,14 +106,14 @@ cd agentsight
 # Install system dependencies (Ubuntu/Debian)
 make install
 
-# Build eBPF programs
+# Build all components (frontend, eBPF, and Rust)
 make build
 
-# Build Rust collector
-cd collector && cargo build --release
+# Or build individually:
+# make build-frontend  # Build frontend assets
+# make build-bpf       # Build eBPF programs  
+# make build-rust      # Build Rust collector
 
-# Build frontend (optional)
-cd frontend && npm install && npm run build
 ```
 
 ### Basic Usage
@@ -283,11 +283,11 @@ A: Verify the collector is running and check network connectivity to port 8080.
 
 ```
 agentsight/
-├── src/                    # Core eBPF programs
+├── bpf/                   # Core eBPF programs
 │   ├── sslsniff.bpf.c     # SSL/TLS traffic monitoring
 │   ├── process.bpf.c      # Process lifecycle tracking
 │   └── *.c                # Userspace loaders
-├── collector/             # Rust analysis framework
+├── collector/             # Rust analysis framework (agentsight package)
 │   ├── src/framework/     # Core streaming framework
 │   ├── src/main.rs        # CLI entry point
 │   └── DESIGN.md          # Architecture documentation
@@ -312,7 +312,6 @@ make install
 
 # Run tests
 make test
-cd collector && cargo test
 
 # Frontend development
 cd frontend && npm run dev
