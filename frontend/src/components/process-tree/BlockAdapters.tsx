@@ -16,7 +16,7 @@ export function adaptPromptEvent(event: ParsedEvent): UnifiedBlockData {
   // Fold content: short preview
   const foldContent = event.content && event.content.length > 0 
     ? event.content.substring(0, 100) + (event.content.length > 100 ? '...' : '')
-    : metadata.url || 'AI Prompt';
+    : metadata.url || '';
 
   // Expanded content: everything
   const expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
@@ -41,7 +41,7 @@ export function adaptResponseEvent(event: ParsedEvent): UnifiedBlockData {
   // Fold content: short preview
   const foldContent = event.content && event.content.length > 0 
     ? event.content.substring(0, 100) + (event.content.length > 100 ? '...' : '')
-    : `Status: ${metadata.status || 'Unknown'}`;
+    : '';
 
   // Expanded content: everything
   const expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
@@ -50,7 +50,7 @@ export function adaptResponseEvent(event: ParsedEvent): UnifiedBlockData {
     id: event.id,
     type: 'response',
     timestamp: event.timestamp,
-    tags: ['AI RESPONSE', metadata.model, `Status: ${metadata.status || 'Unknown'}`].filter(Boolean),
+    tags: ['AI RESPONSE', metadata.model].filter(Boolean),
     bgGradient: 'bg-gradient-to-r from-green-50 via-emerald-50 to-teal-50',
     borderColor: 'border-green-400',
     iconColor: 'text-green-600',
@@ -72,8 +72,8 @@ function formatFileSize(bytes: number): string {
 export function adaptFileEvent(event: ParsedEvent): UnifiedBlockData {
   const metadata = event.metadata || {};
   
-  const operation = metadata.operation || metadata.event || 'file operation';
-  const filepath = metadata.path || metadata.filepath || 'unknown';
+  const operation = metadata.operation || metadata.event || 'file';
+  const filepath = metadata.path || metadata.filepath || '';
   
   // Color scheme based on operation type - matching old FileBlock
   const getOperationColors = (op: string) => {
@@ -114,9 +114,9 @@ export function adaptFileEvent(event: ParsedEvent): UnifiedBlockData {
 export function adaptProcessEvent(event: ParsedEvent): UnifiedBlockData {
   const metadata = event.metadata || {};
   
-  const eventType = metadata.event || 'process event';
-  const comm = metadata.comm || 'unknown';
-  const pid = metadata.pid || 'unknown';
+  const eventType = metadata.event || 'process';
+  const comm = metadata.comm || '';
+  const pid = metadata.pid || '';
 
   // Styling based on event type
   const getProcessColors = (eventType: string) => {
@@ -139,10 +139,11 @@ export function adaptProcessEvent(event: ParsedEvent): UnifiedBlockData {
   };
 
   const colors = getProcessColors(eventType);
-  const tags = [eventType.toUpperCase(), `PID ${pid}`];
+  const tags = [eventType.toUpperCase()];
+  if (pid) tags.push(`PID ${pid}`);
 
   // Fold content: command and PID
-  const foldContent = `${comm} (PID: ${pid})`;
+  const foldContent = comm && pid ? `${comm} (PID: ${pid})` : comm || `PID: ${pid}`;
 
   // Expanded content: everything
   const expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
@@ -164,12 +165,12 @@ export function adaptProcessEvent(event: ParsedEvent): UnifiedBlockData {
 export function adaptSSLEvent(event: ParsedEvent): UnifiedBlockData {
   const metadata = event.metadata || {};
   
-  const direction = metadata.direction || 'unknown';
+  const direction = metadata.direction || '';
   const size = metadata.data_size || metadata.size || 0;
-  const comm = metadata.comm || 'unknown';
+  const comm = metadata.comm || '';
 
   // Fold content: size and command
-  const foldContent = `${size} bytes - ${comm}`;
+  const foldContent = comm ? `${size} bytes - ${comm}` : `${size} bytes`;
 
   // Expanded content: everything
   const expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
@@ -178,7 +179,7 @@ export function adaptSSLEvent(event: ParsedEvent): UnifiedBlockData {
     id: event.id,
     type: 'ssl',
     timestamp: event.timestamp,
-    tags: ['SSL', direction.toUpperCase(), `${size} bytes`],
+    tags: ['SSL', direction.toUpperCase(), `${size} bytes`].filter(Boolean),
     bgGradient: 'bg-gradient-to-r from-orange-50 via-amber-50 to-yellow-50',
     borderColor: 'border-orange-400',
     iconColor: 'text-orange-600',

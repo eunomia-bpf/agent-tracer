@@ -227,14 +227,25 @@ export function UnifiedBlock({ data, isExpanded, onToggle }: UnifiedBlockProps) 
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 flex-1 min-w-0">
                 {/* Tags */}
-                {data.tags.map((tag, index) => (
-                  <span key={tag} className={`px-2 py-1 text-xs font-bold rounded uppercase ${
-                    index === 0 ? `${data.iconColor.replace('text-', 'bg-').replace('-600', '-100')} ${data.iconColor.replace('-600', '-800')}` : 
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {tag}
-                  </span>
-                ))}
+                {data.tags.map((tag, index) => {
+                  if (index === 0) {
+                    // First tag uses primary color scheme
+                    const bgColor = data.iconColor.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100');
+                    const textColor = data.iconColor.replace('-600', '-800').replace('-700', '-800');
+                    return (
+                      <span key={tag} className={`px-2 py-1 text-xs font-bold rounded uppercase ${bgColor} ${textColor}`}>
+                        {tag}
+                      </span>
+                    );
+                  } else {
+                    // Other tags use gray
+                    return (
+                      <span key={tag} className="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-bold rounded uppercase">
+                        {tag}
+                      </span>
+                    );
+                  }
+                })}
                 
                 {/* Content when not expanded */}
                 {!isExpanded && (
@@ -266,7 +277,7 @@ export function UnifiedBlock({ data, isExpanded, onToggle }: UnifiedBlockProps) 
         {isExpanded && (
           <div className={`mt-2 pt-2 border-t ${data.borderColor.replace('border-', 'border-').replace('-400', '-200')}`}>
             <div className="bg-white/50 p-2 rounded border">
-              <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+              <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-800">
                 {data.expandedContent}
               </pre>
             </div>
