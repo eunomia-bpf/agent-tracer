@@ -16,6 +16,11 @@ jobs:
         with:
           submodules: 'recursive'
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
       - name: install deps
         run: |
           sudo apt-get install -y --no-install-recommends \

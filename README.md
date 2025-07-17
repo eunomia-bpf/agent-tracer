@@ -7,6 +7,20 @@ AgentSight is a comprehensive observability framework designed specifically for 
 
 **✨ Zero Instrumentation Required** - No code changes, no new dependencies, no SDKs. Works with any AI framework or application out of the box.
 
+## Quick Start
+
+```bash
+make install
+# Record agent behavior from claude
+agentsight record -c "claude"
+```
+
+<div align="center">
+  <img src="docs/demo-tree.png" alt="AgentSight Demo - Process Tree Visualization" width="800">
+  <p><em>Real-time process tree visualization showing AI agent interactions and system calls</em></p>
+</div>
+
+
 ## 🚀 Why AgentSight?
 
 ### Traditional Observability vs. System-Level Monitoring
@@ -19,8 +33,6 @@ AgentSight is a comprehensive observability framework designed specifically for 
 | **Encrypted Traffic** | ❌ Only sees wrapper outputs | ✅ Captures real unencrypted requests/responses |
 | **System Interactions** | ❌ Misses subprocess executions | ✅ Tracks all process behaviors & file operations |
 | **Multi-Agent Systems** | ❌ Isolated per-process tracing | ✅ Global correlation and analysis |
-
-### System Boundary Advantage
 
 AgentSight captures critical interactions that application-level tools miss:
 
@@ -86,7 +98,7 @@ AgentSight captures critical interactions that application-level tools miss:
 eBPF Programs → JSON Events → Runners → Analyzer Chain → Frontend/Storage/Output
 ```
 
-## 🚀 Quick Start
+## Usage
 
 ### Prerequisites
 
@@ -115,135 +127,6 @@ make build
 # make build-rust      # Build Rust collector
 
 ```
-
-### Basic Usage
-
-#### Monitor SSL Traffic
-
-```bash
-# Using collector framework with filtering
-cd collector && cargo run ssl --sse-merge -- -p 1234
-```
-
-#### Monitor Process Lifecycle
-
-```bash
-# Using collector framework
-cd collector && cargo run process -- -c python
-```
-
-#### Combined Agent Monitoring
-
-```bash
-# Monitor specific agent by PID or command
-cd collector && cargo run agent --comm python --pid 1234
-```
-
-#### Web Interface
-
-```bash
-# Using embedded web server
-cd collector && cargo run server
-# Open http://localhost:8080/timeline
-
-# Using Next.js development server
-cd frontend && npm run dev
-# Open http://localhost:3000/timeline
-```
-
-## 🔧 Usage Examples
-
-### Real-World Scenarios
-
-#### Monitoring Claude Code AI Assistant
-
-```bash
-# Monitor Claude Code interactions
-cd collector && cargo run agent -- --comm claude-code
-```
-
-#### Analyzing LangChain Applications
-
-```bash
-# Monitor Python-based LangChain agents
-cd collector && cargo run agent -- --comm python
-```
-
-#### Debugging Multi-Agent Systems
-
-```bash
-# Monitor all agent processes with correlation
-cd collector && cargo run ssl -- --sse-merge > agents.log
-```
-
-### Configuration Options
-
-#### SSL Traffic Filtering
-
-```bash
-# Filter by port and merge SSE streams
-cd collector && cargo run ssl -- --port 443 --sse-merge
-
-# Monitor specific processes
-cd collector && cargo run ssl -- --comm python
-```
-
-#### Process Monitoring
-
-```bash
-# Monitor file operations for specific commands
-cd collector && cargo run process -- --comm python
-
-# Filter by process name
-cd collector && cargo run process -- --comm node
-```
-
-## 📊 Visualization Features
-
-### Timeline View
-
-- Interactive timeline with zoom and pan
-- Event grouping by type and source
-- Real-time filtering and search
-- Minimap for navigation
-
-### Process Tree View  
-
-- Hierarchical process visualization
-- Lifecycle tracking (fork, exec, exit)
-- Resource usage monitoring
-- Parent-child relationship mapping
-
-### Log View
-
-- Raw event inspection with JSON formatting
-- Syntax highlighting and pretty printing
-- Export capabilities (JSON, CSV)
-- Error detection and validation
-
-## 🔍 Advanced Features
-
-### HTTP Traffic Analysis
-
-- Automatic HTTP request/response parsing
-- Header extraction and analysis
-- Chunked transfer encoding support
-- Authentication token filtering
-
-### Event Correlation
-
-- Cross-process event correlation
-- Timeline synchronization
-- Causal relationship detection
-- Performance metrics calculation
-
-### Security Features
-
-- Tamper-resistant kernel-level monitoring
-- Encrypted traffic decryption
-- Privilege escalation detection
-- Suspicious behavior alerting
-
 ## ❓ Frequently Asked Questions
 
 ### General
@@ -276,28 +159,6 @@ A: Ensure you're running with `sudo` or have `CAP_BPF` and `CAP_SYS_ADMIN` capab
 **Q: "Failed to load eBPF program" errors**  
 A: Check kernel version and eBPF support. Update vmlinux.h for your architecture if needed.
 
-**Q: Frontend not loading data**  
-A: Verify the collector is running and check network connectivity to port 8080.
-
-## 📁 Project Structure
-
-```
-agentsight/
-├── bpf/                   # Core eBPF programs
-│   ├── sslsniff.bpf.c     # SSL/TLS traffic monitoring
-│   ├── process.bpf.c      # Process lifecycle tracking
-│   └── *.c                # Userspace loaders
-├── collector/             # Rust analysis framework (agentsight package)
-│   ├── src/framework/     # Core streaming framework
-│   ├── src/main.rs        # CLI entry point
-│   └── DESIGN.md          # Architecture documentation
-├── frontend/              # React/TypeScript visualization
-│   ├── src/components/    # UI components
-│   └── src/app/           # Next.js application
-├── docs/                  # Documentation
-├── script/                # Python analysis tools
-└── vmlinux/               # Kernel headers
-```
 
 ## 🤝 Contributing
 
@@ -317,7 +178,7 @@ make test
 cd frontend && npm run dev
 
 # Build debug versions with AddressSanitizer
-make debug
+make -C bpf debug
 ```
 
 ### Key Resources

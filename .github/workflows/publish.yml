@@ -49,6 +49,11 @@ jobs:
           
           return tag ? tag.name : increase_v(latest_release_tag)
 
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
     - name: install deps
       run: |
         sudo apt-get install -y --no-install-recommends \
@@ -63,7 +68,8 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
           files: |
-            src/bootstrap
+            bpf/bootstrap
+            collector/target/release/agentsight
           prerelease: false
           tag_name: ${{ steps.set_version.outputs.result }}
           generate_release_notes: true
