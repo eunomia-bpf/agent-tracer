@@ -388,6 +388,17 @@ impl Analyzer for SSLFilter {
     }
 }
 
+impl Drop for SSLFilter {
+    fn drop(&mut self) {
+        // Update global metrics when filter is dropped
+        let total = self.total_events_processed.load(std::sync::atomic::Ordering::Relaxed);
+        let filtered = self.filtered_events_count.load(std::sync::atomic::Ordering::Relaxed);
+        let passed = self.passed_events_count.load(std::sync::atomic::Ordering::Relaxed);
+        
+        update_global_ssl_metrics(total, filtered, passed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +535,48 @@ mod tests {
         
         assert!(filter.evaluate(&matching_event));
         assert!(!filter.evaluate(&non_matching_event));
+    }
+}
+
+// Global metrics storage for SSL filter
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[derive(Debug, Clone)]
+struct SSLFilterMetrics {
+    total_events_processed: u64,
+    filtered_events_count: u64, 
+    passed_events_count: u64,
+}
+
+static SSL_FILTER_GLOBAL_METRICS: OnceLock<Arc<Mutex<SSLFilterMetrics>>> = OnceLock::new();
+
+/// Print global SSL filter metrics
+pub fn print_global_ssl_filter_metrics() {
+    if let Some(metrics_ref) = SSL_FILTER_GLOBAL_METRICS.get() {
+        if let Ok(metrics) = metrics_ref.lock() {
+            println!("[SSLFilter Global Metrics] Total: {}, Filtered: {}, Passed: {}", 
+                     metrics.total_events_processed, 
+                     metrics.filtered_events_count, 
+                     metrics.passed_events_count);
+        }
+    } else {
+        println!("[SSLFilter Global Metrics] No metrics available");
+    }
+}
+
+/// Update global SSL filter metrics
+fn update_global_ssl_metrics(total: u64, filtered: u64, passed: u64) {
+    let metrics = SSL_FILTER_GLOBAL_METRICS.get_or_init(|| {
+        Arc::new(Mutex::new(SSLFilterMetrics {
+            total_events_processed: 0,
+            filtered_events_count: 0,
+            passed_events_count: 0,
+        }))
+    });
+    
+    if let Ok(mut m) = metrics.lock() {
+        m.total_events_processed += total;
+        m.filtered_events_count += filtered;
+        m.passed_events_count += passed;
     }
 }

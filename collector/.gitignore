@@ -6,3 +6,4 @@ process.log
 ssl.log
 agent.log
 trace.log
+record.log

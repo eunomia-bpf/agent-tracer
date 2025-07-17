@@ -34,7 +34,7 @@ pub use sse_processor::SSEProcessor;
 pub use http_parser::HTTPParser;
 pub use http_filter::{HTTPFilter, print_global_http_filter_metrics};
 pub use auth_header_remover::AuthHeaderRemover;
-pub use ssl_filter::SSLFilter;
+pub use ssl_filter::{SSLFilter, print_global_ssl_filter_metrics};
 
 #[cfg(test)]
 mod comprehensive_analyzer_chain_tests {

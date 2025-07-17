@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { LogView } from '@/components/LogView';
 import { TimelineView } from '@/components/TimelineView';
 import { ProcessTreeView } from '@/components/ProcessTreeView';
+import { UploadPanel } from '@/components/UploadPanel';
 import { Event } from '@/types/event';
 
 type ViewMode = 'log' | 'timeline' | 'process-tree';
@@ -14,42 +15,10 @@ export default function Home() {
   const [events, setEvents] = useState<Event[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('process-tree');
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string>('');
   const [isParsed, setIsParsed] = useState(false);
-
-  // Load data from localStorage on component mount
-  useEffect(() => {
-    const savedContent = localStorage.getItem('agent-tracer-log');
-    const savedEvents = localStorage.getItem('agent-tracer-events');
-    
-    if (savedContent && savedEvents) {
-      setLogContent(savedContent);
-      setEvents(JSON.parse(savedEvents));
-      setIsParsed(true);
-    }
-  }, []);
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const uploadedFile = event.target.files?.[0];
-    if (uploadedFile) {
-      setFile(uploadedFile);
-      setError('');
-      setIsParsed(false);
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target?.result as string;
-        setLogContent(content);
-      };
-      reader.readAsText(uploadedFile);
-    }
-  };
-
-  const handleTextPaste = (content: string) => {
-    setLogContent(content);
-    setIsParsed(false);
-    setError('');
-  };
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
 
   const parseLogContent = (content: string) => {
     if (!content.trim()) {
@@ -106,6 +75,7 @@ export default function Home() {
       
       setEvents(sortedEvents);
       setIsParsed(true);
+      setShowUploadPanel(false); // Hide upload panel after successful parse
       
       // Save to localStorage
       localStorage.setItem('agent-tracer-log', content);
@@ -118,6 +88,71 @@ export default function Home() {
     }
   };
 
+  const syncData = async () => {
+    setSyncing(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/events');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+      }
+
+      const content = await response.text();
+      
+      if (!content.trim()) {
+        setError('No data received from server');
+        return;
+      }
+
+      setLogContent(content);
+      parseLogContent(content);
+      
+    } catch (err) {
+      setError(`Failed to sync data: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Load data from localStorage on component mount and try to sync
+  useEffect(() => {
+    const savedContent = localStorage.getItem('agent-tracer-log');
+    const savedEvents = localStorage.getItem('agent-tracer-events');
+    
+    if (savedContent && savedEvents) {
+      setLogContent(savedContent);
+      setEvents(JSON.parse(savedEvents));
+      setIsParsed(true);
+    } else {
+      // Try to sync data on initial load if no local data
+      syncData();
+    }
+  }, []);
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFile = event.target.files?.[0];
+    if (uploadedFile) {
+      setFile(uploadedFile);
+      setError('');
+      setIsParsed(false);
+      
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target?.result as string;
+        setLogContent(content);
+      };
+      reader.readAsText(uploadedFile);
+    }
+  };
+
+  const handleTextPaste = (content: string) => {
+    setLogContent(content);
+    setIsParsed(false);
+    setError('');
+  };
+
   const clearData = () => {
     setFile(null);
     setLogContent('');
@@ -127,8 +162,6 @@ export default function Home() {
     localStorage.removeItem('agent-tracer-log');
     localStorage.removeItem('agent-tracer-events');
   };
-
-  const sampleLogPath = '/home/yunwei37/agent-tracer/collector/ssl.log';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -143,142 +176,143 @@ export default function Home() {
           </p>
         </div>
 
-        {/* File Upload Section */}
-        {!isParsed && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Upload Log File
-            </h2>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Choose log file
-                </label>
-                <input
-                  type="file"
-                  accept=".log,.txt,.json"
-                  onChange={handleFileUpload}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                />
-              </div>
-              
-              <div className="text-center text-gray-500">
-                <span>or</span>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Paste log content
-                </label>
-                <textarea
-                  placeholder={`Paste log content here (e.g., from ${sampleLogPath})`}
-                  className="w-full h-32 p-3 border border-gray-300 rounded-md font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  onChange={(e) => handleTextPaste(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Parse Button */}
-            {logContent && !loading && (
-              <div className="mt-4 flex justify-center">
-                <button
-                  onClick={() => parseLogContent(logContent)}
-                  className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                >
-                  Parse Log
-                </button>
-              </div>
-            )}
-
-            {error && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
-                <div className="text-red-700 text-sm">{error}</div>
-              </div>
-            )}
-
-            {loading && (
-              <div className="mt-4 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                <span className="ml-2 text-gray-600">Parsing log content...</span>
-              </div>
-            )}
-          </div>
+        {/* Upload Panel */}
+        {showUploadPanel && (
+          <UploadPanel
+            logContent={logContent}
+            loading={loading}
+            error={error}
+            onFileUpload={handleFileUpload}
+            onTextPaste={handleTextPaste}
+            onParseLog={() => parseLogContent(logContent)}
+          />
         )}
 
-        {/* Main Content */}
-        {isParsed && events.length > 0 && (
-          <div className="space-y-6">
-            {/* Controls */}
-            <div className="bg-white rounded-lg shadow-md p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="text-sm text-gray-600">
-                    <span className="font-medium">{events.length}</span> events loaded
-                  </div>
-                  
-                  {file && (
-                    <div className="text-sm text-gray-600">
-                      File: <span className="font-medium">{file.name}</span>
-                    </div>
-                  )}
+        {/* Main Content - Always show */}
+        <div className="space-y-6">
+          {/* Controls */}
+          <div className="bg-white rounded-lg shadow-md p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">{events.length}</span> events loaded
                 </div>
                 
-                <div className="flex items-center space-x-4">
-                  {/* View Mode Toggle */}
-                  <div className="flex rounded-lg border border-gray-200 p-1">
-                    <button
-                      onClick={() => setViewMode('log')}
-                      className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                        viewMode === 'log'
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      Log View
-                    </button>
-                    <button
-                      onClick={() => setViewMode('timeline')}
-                      className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                        viewMode === 'timeline'
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      Timeline View
-                    </button>
-                    <button
-                      onClick={() => setViewMode('process-tree')}
-                      className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                        viewMode === 'process-tree'
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      Process Tree
-                    </button>
+                {file && (
+                  <div className="text-sm text-gray-600">
+                    File: <span className="font-medium">{file.name}</span>
                   </div>
-                  
+                )}
+                
+                {syncing && (
+                  <div className="flex items-center text-sm text-blue-600">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                    Syncing...
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex items-center space-x-4">
+                {/* View Mode Toggle */}
+                <div className="flex rounded-lg border border-gray-200 p-1">
                   <button
-                    onClick={clearData}
-                    className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+                    onClick={() => setViewMode('log')}
+                    className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                      viewMode === 'log'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
                   >
-                    Clear Data
+                    Log View
+                  </button>
+                  <button
+                    onClick={() => setViewMode('timeline')}
+                    className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                      viewMode === 'timeline'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Timeline View
+                  </button>
+                  <button
+                    onClick={() => setViewMode('process-tree')}
+                    className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                      viewMode === 'process-tree'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Process Tree
                   </button>
                 </div>
+                
+                {/* Action Buttons */}
+                <button
+                  onClick={() => setShowUploadPanel(!showUploadPanel)}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors border border-gray-300"
+                >
+                  {showUploadPanel ? 'Hide' : 'Upload'} Log
+                </button>
+                
+                <button
+                  onClick={syncData}
+                  disabled={syncing}
+                  className="px-4 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-colors border border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Sync Data
+                </button>
+                
+                <button
+                  onClick={clearData}
+                  className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+                >
+                  Clear Data
+                </button>
               </div>
             </div>
+          </div>
 
-            {/* View Content */}
-            {viewMode === 'log' ? (
+          {/* View Content */}
+          {events.length > 0 ? (
+            viewMode === 'log' ? (
               <LogView events={events} />
             ) : viewMode === 'timeline' ? (
               <TimelineView events={events} />
             ) : (
               <ProcessTreeView events={events} />
-            )}
-          </div>
-        )}
+            )
+          ) : (
+            <div className="bg-white rounded-lg shadow-md p-12 text-center">
+              <div className="text-gray-500">
+                {syncing ? (
+                  <div className="flex flex-col items-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                    <p className="text-lg">Loading events from server...</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-lg mb-4">No events loaded</p>
+                    <div className="space-x-4">
+                      <button
+                        onClick={syncData}
+                        className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Sync Data from Server
+                      </button>
+                      <button
+                        onClick={() => setShowUploadPanel(true)}
+                        className="px-6 py-3 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                      >
+                        Upload Log File
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
