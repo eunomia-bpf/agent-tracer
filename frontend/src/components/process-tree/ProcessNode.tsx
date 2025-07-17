@@ -3,11 +3,8 @@
 import { useState } from 'react';
 import { ChevronDownIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import { ProcessNode as ProcessNodeType, ParsedEvent } from '@/utils/eventParsers';
-import { PromptBlock } from './PromptBlock';
-import { ResponseBlock } from './ResponseBlock';
-import { SSLBlock } from './SSLBlock';
-import { FileBlock } from './FileBlock';
-import { ProcessBlock } from './ProcessBlock';
+import { UnifiedBlock } from './UnifiedBlock';
+import { adaptEventToUnifiedBlock } from './BlockAdapters';
 
 interface ProcessNodeProps {
   process: ProcessNodeType;
@@ -80,25 +77,16 @@ export function ProcessNode({
 
   const renderEvent = (event: ParsedEvent) => {
     const isEventExpanded = expandedEvents.has(event.id);
-    const eventProps = {
-      event: { ...event, isExpanded: isEventExpanded },
-      onToggle: onToggleEvent
-    };
-
-    switch (event.type) {
-      case 'prompt':
-        return <PromptBlock key={event.id} {...eventProps} />;
-      case 'response':
-        return <ResponseBlock key={event.id} {...eventProps} />;
-      case 'ssl':
-        return <SSLBlock key={event.id} {...eventProps} />;
-      case 'file':
-        return <FileBlock key={event.id} {...eventProps} />;
-      case 'process':
-        return <ProcessBlock key={event.id} {...eventProps} />;
-      default:
-        return <SSLBlock key={event.id} {...eventProps} />;
-    }
+    const unifiedBlockData = adaptEventToUnifiedBlock(event);
+    
+    return (
+      <UnifiedBlock
+        key={event.id}
+        data={unifiedBlockData}
+        isExpanded={isEventExpanded}
+        onToggle={() => onToggleEvent(event.id)}
+      />
+    );
   };
 
   return (

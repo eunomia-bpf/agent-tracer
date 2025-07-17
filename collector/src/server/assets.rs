@@ -9,6 +9,7 @@ pub struct StaticAssets;
 
 #[derive(RustEmbed)]
 #[folder = "../frontend/.next/server/app/"]
+#[include = "*.html"]
 pub struct PageAssets;
 
 pub struct FrontendAssets;
