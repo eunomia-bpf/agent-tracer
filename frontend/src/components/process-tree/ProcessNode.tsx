@@ -7,6 +7,7 @@ import { PromptBlock } from './PromptBlock';
 import { ResponseBlock } from './ResponseBlock';
 import { SSLBlock } from './SSLBlock';
 import { FileBlock } from './FileBlock';
+import { ProcessBlock } from './ProcessBlock';
 
 interface ProcessNodeProps {
   process: ProcessNodeType;
@@ -67,6 +68,13 @@ export function ProcessNode({
         </span>
       );
     }
+    if (eventCounts.process) {
+      badges.push(
+        <span key="process" className="px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded-full">
+          {eventCounts.process} process
+        </span>
+      );
+    }
     return badges;
   };
 
@@ -86,6 +94,8 @@ export function ProcessNode({
         return <SSLBlock key={event.id} {...eventProps} />;
       case 'file':
         return <FileBlock key={event.id} {...eventProps} />;
+      case 'process':
+        return <ProcessBlock key={event.id} {...eventProps} />;
       default:
         return <SSLBlock key={event.id} {...eventProps} />;
     }
@@ -137,10 +147,10 @@ export function ProcessNode({
 
       {/* Expanded Content */}
       {isExpanded && (
-        <div style={{ marginLeft: `${indent + 32}px` }} className="mt-2 mb-4">
+        <div style={{ marginLeft: `${indent + 32}px` }} className="mt-1 mb-2">
           {/* Events */}
           {process.events.length > 0 && (
-            <div className="space-y-2 mb-4">
+            <div className="space-y-1 mb-2">
               {process.events.map(event => renderEvent(event))}
             </div>
           )}

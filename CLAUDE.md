@@ -73,6 +73,9 @@ cd collector && cargo run agent --comm python --pid 1234
 # Run frontend development server
 cd frontend && npm run dev
 
+# Run embedded web server for frontend
+cd collector && cargo run server
+
 # Build with AddressSanitizer for debugging
 cd src && make debug
 cd src && make sslsniff-debug
@@ -92,6 +95,7 @@ cd collector && cargo test -- --test-threads=1
 
 # Frontend linting and type checking
 cd frontend && npm run lint
+cd frontend && npm run build  # Also runs type checking
 ```
 
 ## Architecture Overview
@@ -182,6 +186,26 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 5. **Type Safety**: Rust type system ensures memory safety and prevents common vulnerabilities
 6. **Zero-Instrumentation**: System-level monitoring without modifying target applications
 
+## Development Workflow
+
+### Typical Development Cycle
+
+1. **Build eBPF programs**: `make build` (run from root directory)
+2. **Build collector**: `cd collector && cargo build`
+3. **Test changes**: `cd src && make test && cd ../collector && cargo test`
+4. **Run specific components**: Use individual commands for testing (see Development Commands)
+5. **Frontend integration**: Use embedded server or Next.js dev server for UI testing
+
+### CLI Command Structure
+
+The collector uses a subcommand-based CLI:
+- `ssl`: Monitor SSL/TLS traffic with configurable filtering and analysis
+- `process`: Monitor process lifecycle events and file operations  
+- `agent`: Combined monitoring for specific processes (by PID or command name)
+- `server`: Run embedded web server with frontend for visualization
+
+Each subcommand supports its own set of flags and options for customization.
+
 ## Testing Strategy
 
 - **Unit Tests**: C tests for utility functions (`test_process_utils.c`)
@@ -209,8 +233,9 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 
 ### Development Dependencies
 - **Rust**: cargo edition 2024, env_logger, tempfile, uuid, hex, chunked_transfer
-- **Frontend**: ESLint, PostCSS, Autoprefixer
+- **Frontend**: ESLint, PostCSS, Autoprefixer, TypeScript compiler
 - **Python**: Analysis scripts for data processing (optional)
+- **Web Server**: hyper, hyper-util, rust-embed for embedded frontend serving
 
 ## Common Issues and Solutions
 
@@ -220,6 +245,8 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 - **UTF-8 Handling**: HTTP parser includes safety fixes for malformed data
 - **Frontend Build**: Ensure Node.js version compatibility and clean `node_modules` if needed
 - **Cargo Edition**: Project uses Rust edition 2024 - ensure compatible toolchain
+- **eBPF Program Loading**: If programs fail to load, check for missing BTF support or use fallback vmlinux.h
+- **Port Conflicts**: Default web server runs on 8080, frontend dev server on 3000
 
 ## Usage Examples
 
@@ -242,6 +269,11 @@ cd collector && cargo run agent --comm python --pid 1234
 
 ### Frontend Visualization
 ```bash
+# Using Next.js development server
 cd frontend && npm run dev
 # Open http://localhost:3000/timeline
+
+# Using embedded web server in collector
+cd collector && cargo run server
+# Open http://localhost:8080/timeline
 ```

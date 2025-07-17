@@ -39,20 +39,20 @@ export function SSLBlock({ event, onToggle }: SSLBlockProps) {
     : 'bg-gray-100 text-gray-800';
 
   return (
-    <div className="mb-3">
+    <div className="mb-1">
       <div
-        className={`relative p-4 bg-gradient-to-r ${colorClasses} border-l-4 rounded-lg cursor-pointer transition-all duration-200 shadow-sm hover:shadow-md`}
+        className={`relative p-2 bg-gradient-to-r ${colorClasses} border-l-4 rounded-lg cursor-pointer transition-all duration-200 shadow-sm hover:shadow-md`}
         onClick={() => shouldShowExpandButton && onToggle(id)}
       >
         {/* Header with icon and expand button */}
         <div className="flex items-start space-x-3">
-          <div className="flex-shrink-0 mt-1">
-            <LockClosedIcon className={`h-5 w-5 ${iconColor}`} />
+          <div className="flex-shrink-0">
+            <LockClosedIcon className={`h-4 w-4 ${iconColor}`} />
           </div>
           
           <div className="flex-1 min-w-0">
-            {/* Title and metadata row */}
-            <div className="flex items-center justify-between mb-2">
+            {/* Compact header */}
+            <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <span className={`px-2 py-1 ${badgeColor} text-xs font-bold rounded uppercase`}>
                   SSL {metadata.message_type || 'DATA'}
@@ -73,6 +73,11 @@ export function SSLBlock({ event, onToggle }: SSLBlockProps) {
                     {statusCode}
                   </span>
                 )}
+                {(metadata.host || metadata.path) && (
+                  <span className="text-sm text-gray-600 font-mono truncate max-w-xs">
+                    {metadata.host || ''}{metadata.path || ''}
+                  </span>
+                )}
               </div>
               
               <div className="flex items-center space-x-2">
@@ -90,7 +95,12 @@ export function SSLBlock({ event, onToggle }: SSLBlockProps) {
                 )}
               </div>
             </div>
-            
+          </div>
+        </div>
+
+        {/* Expanded content */}
+        {isExpanded && (
+          <div className="mt-2 pt-2 border-t border-gray-200">
             {/* URL/Path info */}
             {(metadata.host || metadata.path) && (
               <div className="text-sm text-gray-600 font-mono mb-2 break-all">
@@ -101,9 +111,9 @@ export function SSLBlock({ event, onToggle }: SSLBlockProps) {
             {/* Content */}
             <div className="text-sm text-gray-800">
               <div className="font-medium text-gray-900 mb-1">{title}</div>
-              <div className="bg-white/50 p-3 rounded border border-gray-200">
+              <div className="bg-white/50 p-2 rounded border border-gray-200">
                 <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-40 overflow-y-auto">
-                  {isExpanded ? content : truncatedContent}
+                  {content}
                 </pre>
               </div>
             </div>
@@ -118,7 +128,7 @@ export function SSLBlock({ event, onToggle }: SSLBlockProps) {
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -23,20 +23,20 @@ export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
   const duration = metadata.duration_ns ? `${(metadata.duration_ns / 1000000).toFixed(1)}ms` : null;
 
   return (
-    <div className="mb-3">
+    <div className="mb-1">
       <div
-        className="relative p-4 bg-gradient-to-r from-green-50 via-emerald-50 to-teal-50 border-l-4 border-green-400 rounded-lg cursor-pointer hover:from-green-100 hover:via-emerald-100 hover:to-teal-100 transition-all duration-200 shadow-sm hover:shadow-md"
+        className="relative p-2 bg-gradient-to-r from-green-50 via-emerald-50 to-teal-50 border-l-4 border-green-400 rounded-lg cursor-pointer hover:from-green-100 hover:via-emerald-100 hover:to-teal-100 transition-all duration-200 shadow-sm hover:shadow-md"
         onClick={() => shouldShowExpandButton && onToggle(id)}
       >
         {/* Header with icon and expand button */}
         <div className="flex items-start space-x-3">
-          <div className="flex-shrink-0 mt-1">
-            <ChatBubbleLeftEllipsisIcon className="h-5 w-5 text-green-600" />
+          <div className="flex-shrink-0">
+            <ChatBubbleLeftEllipsisIcon className="h-4 w-4 text-green-600" />
           </div>
           
           <div className="flex-1 min-w-0">
-            {/* Title and metadata row */}
-            <div className="flex items-center justify-between mb-2">
+            {/* Compact header */}
+            <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded uppercase">
                   AI RESPONSE
@@ -56,6 +56,11 @@ export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
                     {duration}
                   </span>
                 )}
+                {!isExpanded && content.trim() && (
+                  <span className="text-sm text-gray-600 truncate max-w-xs">
+                    {truncatedContent}
+                  </span>
+                )}
               </div>
               
               <div className="flex items-center space-x-2">
@@ -73,7 +78,12 @@ export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
                 )}
               </div>
             </div>
-            
+          </div>
+        </div>
+
+        {/* Expanded content */}
+        {isExpanded && (
+          <div className="mt-2 pt-2 border-t border-green-200">
             {/* Message ID if available */}
             {metadata.message_id && (
               <div className="text-xs text-gray-500 font-mono mb-2">
@@ -84,10 +94,10 @@ export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
             {/* Content */}
             <div className="text-sm text-gray-800">
               <div className="font-medium text-gray-900 mb-1">{title}</div>
-              <div className="bg-white/50 p-3 rounded border border-green-200">
+              <div className="bg-white/50 p-2 rounded border border-green-200">
                 {content.trim() ? (
                   <div className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                    {isExpanded ? content : truncatedContent}
+                    {content}
                   </div>
                 ) : (
                   <div className="text-gray-500 italic text-xs">
@@ -112,7 +122,7 @@ export function ResponseBlock({ event, onToggle }: ResponseBlockProps) {
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

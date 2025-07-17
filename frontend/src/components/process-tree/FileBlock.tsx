@@ -49,20 +49,20 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
   const badgeColor = getBadgeColor(operation);
 
   return (
-    <div className="mb-3">
+    <div className="mb-1">
       <div
-        className="relative p-4 bg-gradient-to-r from-cyan-50 via-sky-50 to-blue-50 border-l-4 border-cyan-400 rounded-lg cursor-pointer hover:from-cyan-100 hover:via-sky-100 hover:to-blue-100 transition-all duration-200 shadow-sm hover:shadow-md"
+        className="relative p-2 bg-gradient-to-r from-cyan-50 via-sky-50 to-blue-50 border-l-4 border-cyan-400 rounded-lg cursor-pointer hover:from-cyan-100 hover:via-sky-100 hover:to-blue-100 transition-all duration-200 shadow-sm hover:shadow-md"
         onClick={() => shouldShowExpandButton && onToggle(id)}
       >
         {/* Header with icon and expand button */}
         <div className="flex items-start space-x-3">
-          <div className="flex-shrink-0 mt-1">
-            <DocumentIcon className={`h-5 w-5 ${iconColor}`} />
+          <div className="flex-shrink-0">
+            <DocumentIcon className={`h-4 w-4 ${iconColor}`} />
           </div>
           
           <div className="flex-1 min-w-0">
-            {/* Title and metadata row */}
-            <div className="flex items-center justify-between mb-2">
+            {/* Compact header */}
+            <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <span className={`px-2 py-1 ${badgeColor} text-xs font-bold rounded uppercase`}>
                   {operation}
@@ -75,6 +75,11 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
                 {size !== undefined && (
                   <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded font-mono">
                     {formatFileSize(size)}
+                  </span>
+                )}
+                {path && path !== 'unknown' && (
+                  <span className="text-sm text-gray-700 font-mono truncate max-w-xs">
+                    {path}
                   </span>
                 )}
               </div>
@@ -94,7 +99,12 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
                 )}
               </div>
             </div>
-            
+          </div>
+        </div>
+
+        {/* Expanded content */}
+        {isExpanded && (
+          <div className="mt-2 pt-2 border-t border-cyan-200">
             {/* File path */}
             {path && path !== 'unknown' && (
               <div className="text-sm text-gray-700 font-mono mb-2 break-all bg-white/50 px-2 py-1 rounded border">
@@ -106,9 +116,9 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
             <div className="text-sm text-gray-800">
               <div className="font-medium text-gray-900 mb-1">{title}</div>
               {content.trim() && content !== '{}' && (
-                <div className="bg-white/50 p-3 rounded border border-cyan-200">
+                <div className="bg-white/50 p-2 rounded border border-cyan-200">
                   <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-32 overflow-y-auto">
-                    {isExpanded ? content : truncatedContent}
+                    {content}
                   </pre>
                 </div>
               )}
@@ -121,7 +131,7 @@ export function FileBlock({ event, onToggle }: FileBlockProps) {
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

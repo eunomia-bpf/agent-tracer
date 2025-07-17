@@ -18,6 +18,17 @@
 #define FILE_DEDUP_WINDOW_NS 60000000000ULL  // 60 seconds in nanoseconds
 #define MAX_FILE_HASHES 1024
 
+// Rate limiting per second
+#define MAX_PID_LIMITS 256
+#define MAX_DISTINCT_FILES_PER_SEC 30
+
+struct per_second_limit {
+    pid_t pid;
+    uint64_t current_second;
+    uint32_t distinct_file_count;
+    bool should_warn_next;
+};
+
 // Simple hash table for FILE_OPEN deduplication
 struct file_hash_entry {
     uint64_t hash;
@@ -31,6 +42,9 @@ struct file_hash_entry {
 
 static struct file_hash_entry file_hashes[MAX_FILE_HASHES];
 static int hash_count = 0;
+
+static struct per_second_limit pid_limits[MAX_PID_LIMITS];
+static int pid_limit_count = 0;
 
 static struct env {
 	bool verbose;
@@ -171,6 +185,51 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 
 static volatile bool exiting = false;
 
+// Rate limiting check function
+static bool should_rate_limit_file(const struct event *e, uint64_t timestamp_ns, bool *add_warning) {
+    uint64_t current_second = timestamp_ns / 1000000000ULL;  // Convert to seconds
+    *add_warning = false;
+    
+    // Find/create entry for this PID
+    struct per_second_limit *limit = NULL;
+    for (int i = 0; i < pid_limit_count; i++) {
+        if (pid_limits[i].pid == e->pid) {
+            limit = &pid_limits[i];
+            break;
+        }
+    }
+    
+    if (!limit && pid_limit_count < MAX_PID_LIMITS) {
+        limit = &pid_limits[pid_limit_count++];
+        limit->pid = e->pid;
+        limit->current_second = current_second;
+        limit->distinct_file_count = 0;
+        limit->should_warn_next = false;
+    }
+    
+    if (!limit) return false;
+    
+    // New second - reset and check if we need to warn
+    if (limit->current_second != current_second) {
+        if (limit->should_warn_next) {
+            *add_warning = true;
+            limit->should_warn_next = false;
+        }
+        limit->current_second = current_second;
+        limit->distinct_file_count = 0;
+    }
+    
+    limit->distinct_file_count++;
+    
+    // Check if over limit
+    if (limit->distinct_file_count > MAX_DISTINCT_FILES_PER_SEC) {
+        limit->should_warn_next = true;  // Warn on next event
+        return true;  // Drop this event
+    }
+    
+    return false;
+}
+
 // Shared function to print FILE_OPEN events
 static void print_file_open_event(const struct event *e, uint64_t timestamp_ns, uint32_t count, const char *extra_fields)
 {
@@ -207,10 +266,24 @@ static uint64_t hash_file_open(const struct event *e)
 }
 
 // Get count for FILE_OPEN operations (handles deduplication internally)
-static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns)
+static uint32_t get_file_open_count(const struct event *e, uint64_t timestamp_ns, char *warning_msg, size_t warning_msg_size)
 {
 	if (e->type != EVENT_TYPE_FILE_OPERATION || !e->file_op.is_open) {
 		return 1;  // Return count of 1 for non-FILE_OPEN operations
+	}
+	
+	// Initialize warning message
+	warning_msg[0] = '\0';
+	
+	// Rate limiting check
+	bool add_warning = false;
+	if (should_rate_limit_file(e, timestamp_ns, &add_warning)) {
+		return 0;  // Drop this event
+	}
+	
+	// Build warning message if needed
+	if (add_warning) {
+		snprintf(warning_msg, warning_msg_size, "\"rate_limit_warning\":\"Previous second exceeded %d file limit\"", MAX_DISTINCT_FILES_PER_SEC);
 	}
 	
 	uint64_t hash = hash_file_open(e);
@@ -467,6 +540,21 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 				if (e->duration_ns)
 					printf(",\"duration_ms\":%llu", e->duration_ns / 1000000);
 				
+				// Check if this PID has pending rate limit warning
+				bool add_warning = false;
+				for (int i = 0; i < pid_limit_count; i++) {
+					if (pid_limits[i].pid == e->pid && pid_limits[i].should_warn_next) {
+						add_warning = true;
+						// Remove this entry
+						pid_limits[i] = pid_limits[--pid_limit_count];
+						break;
+					}
+				}
+				
+				if (add_warning) {
+					printf(",\"rate_limit_warning\":\"Process had %d+ file ops/sec\"", MAX_DISTINCT_FILES_PER_SEC);
+				}
+				
 				// Flush all pending FILE_OPEN aggregations for this PID
 				flush_pid_file_opens(e->pid, timestamp_ns);
 			} else {
@@ -493,7 +581,8 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 			}
 			
 			// Get count for this FILE_OPEN operation
-			uint32_t count = get_file_open_count(e, timestamp_ns);
+			char warning_msg[128];
+			uint32_t count = get_file_open_count(e, timestamp_ns, warning_msg, sizeof(warning_msg));
 			
 			// Skip if this is a duplicate (count == 0)
 			if (count == 0) {
@@ -501,7 +590,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 			}
 			
 			// Report the FILE_OPEN event with count
-			print_file_open_event(e, timestamp_ns, count, NULL);
+			print_file_open_event(e, timestamp_ns, count, strlen(warning_msg) > 0 ? warning_msg : NULL);
 			break;
 			
 		default:
@@ -618,6 +707,9 @@ cleanup:
 	
 	/* Clean up FILE_OPEN deduplication tracking */
 	hash_count = 0;
+	
+	/* Clean up rate limiting tracking */
+	pid_limit_count = 0;
 
 	return err < 0 ? -err : 0;
 }
