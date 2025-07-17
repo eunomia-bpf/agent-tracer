@@ -552,15 +552,16 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 				}
 				
 				if (add_warning) {
-					printf(",\"rate_limit_warning\":\"Process had %d+ file ops/sec\"", MAX_DISTINCT_FILES_PER_SEC);
+					printf(",\"rate_limit_warning\":\"Process had %d+ file ops per second\"", MAX_DISTINCT_FILES_PER_SEC);
 				}
-				
+				printf("}\n");
+
 				// Flush all pending FILE_OPEN aggregations for this PID
 				flush_pid_file_opens(e->pid, timestamp_ns);
 			} else {
 				printf(",\"filename\":\"%s\"", e->filename);
+				printf("}\n");
 			}
-			printf("}\n");
 			break;
 			
 		case EVENT_TYPE_BASH_READLINE:
