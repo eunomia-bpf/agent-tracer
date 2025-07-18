@@ -10,7 +10,7 @@ AgentSight is a comprehensive observability framework designed specifically for 
 ## Quick Start
 
 ```bash
-wget https://github.com/eunomia-bpf/agentsight/releases/download/v0.0.45/agentsight && chmod +x agentsight
+wget https://github.com/eunomia-bpf/agentsight/releases/download/v0.0.48/agentsight && chmod +x agentsight
 # Record agent behavior from claude
 sudo ./agentsight record -c "claude"
 ```
@@ -19,7 +19,7 @@ Visit [http://127.0.0.1:8080](http://127.0.0.1:8080) to view the recorded data.
 
 <div align="center">
   <img src="docs/demo-tree.png" alt="AgentSight Demo - Process Tree Visualization" width="800">
-  <p><em>Real-time process tree visualization showing AI agent interactions and system calls</em></p>
+  <p><em>Real-time process tree visualization showing AI agent interactions and file operations</em></p>
 </div>
 
 <div align="center">
