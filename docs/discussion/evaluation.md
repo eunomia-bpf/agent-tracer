@@ -1,7 +1,3 @@
-Here's a practical evaluation plan for **AgentSight**, structured clearly with corresponding research questions to guide your evaluation efforts:
-
----
-
 ## Evaluation Plan
 
 The evaluation aims to demonstrate the practical effectiveness, overhead, coverage, and anomaly-detection capabilities of the **AgentSight** observability system in realistic production-like scenarios.
@@ -141,3 +137,75 @@ To ensure practical relevance, select scenarios involving:
 
 This evaluation plan and these research questions provide a clear, actionable path for demonstrating AgentSight’s practical utility, robustness, and contribution to ML-powered infrastructure observability within real-world production environments, especially within coding-heavy contexts.
 
+If you're short on time (especially for a workshop paper), the single most important evaluation to prioritize is:
+
+**"Coverage & Detection Effectiveness of Critical AI-Agent Anomalies"**
+
+---
+
+### 🔑 Why this experiment matters most:
+
+Your paper’s core selling point is highlighting a unique gap in current observability solutions (inability to observe and detect subtle, malicious, or semantically problematic agent behaviors). The value of **AgentSight** lies precisely in capturing what traditional instrumentation misses—prompt injection, malicious subprocess executions, reasoning loops, and semantic drift.
+
+Demonstrating clearly that your approach can **detect anomalies that existing methods cannot** provides the strongest immediate value and generates significant interest at workshops like PACMI.
+
+---
+
+### ✅ Minimum necessary evaluation plan:
+
+If you can run only one focused experiment, do the following simplified scenario:
+
+#### **Step-by-step simplified experiment:**
+
+1. **Set Up Baseline (minimal):**
+
+   * Run a representative AI-agent workload (e.g., Claude-Code, AutoGen, or Gemini-CLI performing software engineering tasks).
+   * Confirm no alerts or issues in normal conditions.
+
+2. **Inject Specific, High-Impact Anomalies:**
+
+   * **Prompt Injection**: Agent is prompted to secretly execute a subprocess (e.g., `curl` a remote URL).
+   * **Unauthorized Tool Execution**: Agent writes a potentially harmful bash script (`malicious.sh`) and executes it.
+   * **Reasoning Loop**: Agent instructed into an infinite reasoning loop scenario.
+
+3. **Detection Capability:**
+
+   * Show AgentSight clearly capturing:
+
+     * TLS payload with injected malicious prompt.
+     * Execution of unauthorized subprocess (`curl` or `bash script execution`).
+     * Repeated reasoning events indicating loops or drift.
+
+4. **Report Metrics Clearly:**
+
+   * Whether AgentSight detected each injected anomaly (Yes/No).
+   * Time-to-detection (seconds) after anomaly occurs.
+   * Clearly state that traditional methods (instrumentation-based) would miss these scenarios.
+
+---
+
+### 📌 What specifically to include in results (minimum required):
+
+| Injected Anomaly           | Detected by AgentSight? | Time-to-Detection (TTD) |
+| -------------------------- | ----------------------- | ----------------------- |
+| Prompt Injection           | ✅ Yes                   | \~2 seconds             |
+| Unauthorized Exec (`curl`) | ✅ Yes                   | <1 second               |
+| Reasoning Loop             | ✅ Yes                   | \~5 seconds             |
+
+**Note**: Precise numbers above are illustrative—actual measurements required.
+
+---
+
+### 🚩 Why skip other experiments initially?
+
+* **Performance overhead (CPU/memory)** is less critical for early-stage workshops where you primarily showcase conceptual correctness.
+* **Robustness & stability** evaluations (long runs, multi-kernel compatibility) are important, but less urgent for a short paper/demo.
+* Comprehensive metrics like throughput or latency overhead can be briefly acknowledged as future work.
+
+---
+
+### 🎯 Bottom line recommendation (if very limited):
+
+**Prioritize demonstrating the novelty and effectiveness of AgentSight’s core anomaly detection capabilities.**
+
+This evaluation directly supports your key claims, highlights your novel contribution clearly, and generates maximum interest at an early workshop stage, laying a solid foundation for more detailed future studies.
