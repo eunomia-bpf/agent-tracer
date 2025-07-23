@@ -203,41 +203,32 @@ function determineEventType(source: string, data: any): ParsedEvent['type'] {
 }
 
 function isPromptEvent(source: string, data: any): boolean {
-  const extractor = new DataExtractor(data);
-  
-  if (extractor.get('method') === 'POST' && extractor.get('message_type') === 'request') {
-    const path = extractor.get('path', '');
-    const host = extractor.get('host') || extractor.get('headers.host', '');
+  // Simple heuristics for AI request detection
+  const hasAIRequestIndicators = 
+    data.model || 
+    data.messages || 
+    data.prompt || 
+    data.inputs ||
+    data.query ||
+    (data.method === 'POST' && data.message_type === 'request' && 
+     (data.path?.includes('/v1/') || data.path?.includes('/api/')));
     
-    const aiEndpoints = ['api.openai.com', 'api.anthropic.com', 'api.claude.ai'];
-    const aiPaths = ['/v1/chat/completions', '/v1/completions', '/v1/messages'];
-    
-    if (aiEndpoints.some(endpoint => host.includes(endpoint)) || 
-        aiPaths.some(apiPath => path.includes(apiPath))) {
-      return true;
-    }
-    
-    const promptData = extractor.getPromptData();
-    return !!(promptData.model || promptData.messages || promptData.prompt);
-  }
-  
-  return false;
+  return !!hasAIRequestIndicators;
 }
 
 function isResponseEvent(source: string, data: any): boolean {
-  const extractor = new DataExtractor(data);
-  
-  if (source === 'sse_processor' && extractor.get('sse_events')) {
-    return true;
-  }
-  
-  if (extractor.get('message_type') === 'response' && extractor.get('status_code')) {
-    const host = extractor.get('host') || extractor.get('headers.host', '');
-    const aiEndpoints = ['api.openai.com', 'api.anthropic.com', 'api.claude.ai'];
-    return aiEndpoints.some(endpoint => host.includes(endpoint));
-  }
-  
-  return false;
+  // Simple heuristics for AI response detection
+  const hasAIResponseIndicators = 
+    data.choices ||
+    data.completion ||
+    data.response ||
+    data.sse_events ||
+    data.delta ||
+    data.content_block ||
+    (source === 'sse_processor' && data.sse_events) ||
+    (data.message_type === 'response' && (data.model || data.usage));
+    
+  return !!hasAIResponseIndicators;
 }
 
 function isFileEvent(source: string, data: any): boolean {
@@ -260,260 +251,144 @@ function isProcessEvent(source: string, data: any): boolean {
 }
 
 function parsePromptEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
-  const promptData = extractor.getPromptData();
+  const data = event.data;
+  let model = data.model || 'AI Request';
+  const method = data.method || 'POST';
   
-  const model = promptData.model || 'Unknown Model';
-  const method = extractor.get('method', 'POST');
-  
-  const sections: string[] = [];
-  let hasStructuredData = false;
-  
-  // System messages
-  if (promptData.system?.length > 0) {
-    hasStructuredData = true;
-    sections.push('=== SYSTEM ===');
-    promptData.system.forEach((s: any) => {
-      if (typeof s === 'object' && s.text) {
-        sections.push(s.text);
-        if (s.cache_control) {
-          sections.push(`[Cache: ${extractor.toString(s.cache_control)}]`);
-        }
-      } else {
-        sections.push(extractor.toString(s));
+  // For http_parser events, parse the body field if it exists
+  let displayData = data;
+  if (data.body && typeof data.body === 'string') {
+    try {
+      const parsedBody = JSON.parse(data.body);
+      // Extract model from parsed body if available
+      if (parsedBody.model) {
+        model = parsedBody.model;
       }
-    });
-    sections.push('');
+      // Use parsed body as display data
+      displayData = { ...data, body: parsedBody };
+    } catch (e) {
+      // Keep original data if parsing fails
+    }
   }
   
-  // Messages
-  if (promptData.messages?.length > 0) {
-    hasStructuredData = true;
-    promptData.messages.forEach((msg: any) => {
-      sections.push(`=== ${msg.role.toUpperCase()} ===`);
-      sections.push(extractor.toString(msg.content));
-      sections.push('');
-    });
-  }
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(displayData, null, 2);
   
-  // Parameters
-  const params: string[] = [];
-  if (promptData.temperature !== undefined) params.push(`temp: ${promptData.temperature}`);
-  if (promptData.max_tokens !== undefined) params.push(`max_tokens: ${promptData.max_tokens}`);
-  if (promptData.stream !== undefined) params.push(`stream: ${promptData.stream}`);
-  if (promptData.metadata?.user_id) params.push(`user: ${promptData.metadata.user_id.slice(0, 8)}...`);
-  
-  if (params.length > 0) {
-    hasStructuredData = true;
-    sections.push('=== PARAMETERS ===');
-    sections.push(params.join(', '));
-  }
-
-  // If we couldn't parse structured data but this looks like AI data, show raw data
-  if (!hasStructuredData || extractor.isUnparsedAiData()) {
-    sections.push('=== RAW DATA ===');
-    sections.push(extractor.getRawData());
-  }
-
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'prompt',
     title: `${method} ${model}`,
-    content: sections.join('\n'),
-    metadata: { model, method, url: `${extractor.get('host', '')}${extractor.get('path', '')}`, ...promptData },
+    content: content,
+    metadata: { model, method, url: `${data.host || ''}${data.path || ''}`, raw: data },
     isExpanded: false
   };
 }
 
 function parseResponseEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
+  const data = event.data;
+  let model = data.model || 'AI Response';
   
-  let responseText = '';
-  let model = '';
-  let usage: any = null;
-  let hasStructuredData = false;
-  
-  if (extractor.get('sse_events')) {
-    const textParts: string[] = [];
-    
-    extractor.get('sse_events', []).forEach((sseEvent: any) => {
-      const parsed = sseEvent.parsed_data;
-      if (parsed?.type === 'content_block_delta' && parsed.delta?.text) {
-        textParts.push(parsed.delta.text);
-        hasStructuredData = true;
-      } else if (parsed?.type === 'message_start') {
-        model = parsed.message?.model || '';
-        usage = parsed.message?.usage;
-        hasStructuredData = true;
+  // For sse_processor events, extract model and enhance display
+  let displayData = data;
+  if (data.sse_events && Array.isArray(data.sse_events)) {
+    // Look for model in SSE events
+    for (const sseEvent of data.sse_events) {
+      if (sseEvent.parsed_data?.message?.model) {
+        model = sseEvent.parsed_data.message.model;
+        break;
       }
-    });
-    
-    responseText = textParts.join('');
-  } else {
-    responseText = extractor.get('text_content', '');
-    if (responseText) hasStructuredData = true;
+    }
   }
   
-  const sections: string[] = [];
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(displayData, null, 2);
   
-  if (responseText) {
-    sections.push('=== RESPONSE ===');
-    sections.push(responseText);
-    sections.push('');
-  }
-  
-  // Metadata
-  const metadata: string[] = [];
-  if (extractor.get('message_id')) metadata.push(`id: ${extractor.get('message_id')}`);
-  if (extractor.get('duration_ns')) metadata.push(`duration: ${(extractor.get('duration_ns') / 1000000).toFixed(1)}ms`);
-  if (extractor.get('event_count')) metadata.push(`events: ${extractor.get('event_count')}`);
-  if (usage?.input_tokens) metadata.push(`in: ${usage.input_tokens}t`);
-  if (usage?.output_tokens) metadata.push(`out: ${usage.output_tokens}t`);
-  if (usage?.service_tier) metadata.push(`tier: ${usage.service_tier}`);
-  
-  if (metadata.length > 0) {
-    hasStructuredData = true;
-    sections.push('=== METADATA ===');
-    sections.push(metadata.join(', '));
-  }
-
-  // Always include raw data for responses to show full SSE structure
-  sections.push('=== RAW DATA ===');
-  sections.push(extractor.getRawData());
-
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'response',
-    title: model ? `Response from ${model}` : 'AI Response',
-    content: sections.join('\n'),
-    metadata: event.data,
+    title: model,
+    content: content,
+    metadata: { model, raw: data },
     isExpanded: false
   };
 }
 
 function parseSSLEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
+  const data = event.data;
   
-  const method = extractor.get('method', 'UNKNOWN');
-  const host = extractor.get('host') || extractor.get('headers.host', 'unknown');
-  const path = extractor.get('path', '/');
-  const statusCode = extractor.get('status_code');
+  const method = data.method || 'UNKNOWN';
+  const host = data.host || data.headers?.host || 'unknown';
+  const path = data.path || '/';
+  const statusCode = data.status_code;
   
   let title = `${method} ${host}${path}`;
   if (statusCode) title += ` (${statusCode})`;
   
-  const sections: string[] = [];
-  
-  // Show body if available
-  const body = extractor.get('body');
-  if (body) {
-    sections.push('=== BODY ===');
-    sections.push(extractor.toString(body));
-    sections.push('');
-  }
-  
-  // Always show full raw data for SSL events
-  sections.push('=== RAW DATA ===');
-  sections.push(extractor.getRawData());
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(data, null, 2);
 
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'ssl',
     title,
-    content: sections.join('\n'),
-    metadata: event.data,
+    content: content,
+    metadata: data,
     isExpanded: false
   };
 }
 
 function parseFileEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
+  const data = event.data;
+  const operation = data.operation || data.event || 'file op';
+  const path = data.path || data.filepath || 'unknown';
   
-  const operation = extractor.get('operation') || extractor.get('event', 'file op');
-  const path = extractor.get('path') || extractor.get('filepath', 'unknown');
-  
-  const sections: string[] = [];
-  sections.push(`=== ${operation.toUpperCase()} ===`);
-  sections.push(`Path: ${path}`);
-  
-  const metadata: string[] = [];
-  if (extractor.get('size') !== undefined) metadata.push(`size: ${extractor.get('size')}`);
-  if (extractor.get('fd') !== undefined) metadata.push(`fd: ${extractor.get('fd')}`);
-  if (extractor.get('flags') !== undefined) metadata.push(`flags: ${extractor.get('flags')}`);
-  if (extractor.get('permissions')) metadata.push(`perms: ${extractor.get('permissions')}`);
-  
-  if (metadata.length > 0) {
-    sections.push('');
-    sections.push('=== DETAILS ===');
-    sections.push(metadata.join(', '));
-  }
-
-  // Show raw data for complete visibility
-  sections.push('');
-  sections.push('=== RAW DATA ===');
-  sections.push(extractor.getRawData());
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(data, null, 2);
 
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'file',
     title: `${operation} ${path}`,
-    content: sections.join('\n'),
-    metadata: event.data,
+    content: content,
+    metadata: data,
     isExpanded: false
   };
 }
 
 function parseProcessEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
-  
-  const eventType = extractor.get('event', 'process');
-  const filename = extractor.get('filename');
-  const pid = extractor.get('pid');
-  const ppid = extractor.get('ppid');
-  
-  const sections: string[] = [];
-  sections.push(`=== ${eventType.toUpperCase()} ===`);
-  
-  if (filename) sections.push(`Executable: ${filename}`);
-  if (pid) sections.push(`PID: ${pid}`);
-  if (ppid) sections.push(`Parent PID: ${ppid}`);
-  
-  // Show raw data for complete visibility
-  sections.push('');
-  sections.push('=== RAW DATA ===');
-  sections.push(extractor.getRawData());
-  
+  const data = event.data;
+  const eventType = data.event || 'process';
+  const filename = data.filename;
   const title = filename ? `${eventType}: ${filename}` : `${eventType} event`;
+  
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(data, null, 2);
 
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'process',
     title,
-    content: sections.join('\n'),
-    metadata: event.data,
+    content: content,
+    metadata: data,
     isExpanded: false
   };
 }
 
 function parseGenericEvent(event: Event): ParsedEvent {
-  const extractor = new DataExtractor(event.data);
-  
-  const sections: string[] = [];
-  sections.push(`=== ${event.source.toUpperCase()} EVENT ===`);
-  sections.push('=== RAW DATA ===');
-  sections.push(extractor.getRawData());
+  // Simply show the JSON data as-is
+  const content = JSON.stringify(event.data, null, 2);
   
   return {
     id: event.id,
     timestamp: event.timestamp,
     type: 'ssl',
     title: `${event.source} event`,
-    content: sections.join('\n'),
+    content: content,
     metadata: event.data,
     isExpanded: false
   };

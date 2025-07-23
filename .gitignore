@@ -10,3 +10,4 @@ ssl_timeline.json
 .venv/
 agentsight
 record.log
+record.log.*
