@@ -1,8 +1,6 @@
-# AI Agent observability
+# Agentsight: why we need eBPF for AI agent observability
 
-Imagine your new AI agent, tasked with a simple research job, starts secretly writing and executing shell scripts. It could be downloading files, probing your network, or worse. How would you even know? This isn't science fiction; it's the new reality of AI-powered systems, and it highlights a critical blind spot in how we monitor them.
-
-## Problem / Gap
+## The Problem: A New Breed of Software
 
 1. **“AI Agents are evolve rapidly and different from traditional software”**
 
@@ -24,15 +22,8 @@ This new paradigm requires a fundamental shift in our approach to observability.
 
 This table underscores a crucial point: the semantics of AI agent behavior are the new frontier. While traditional APM tools are excellent at tracking the health of infrastructure, they are blind to the quality and safety of the agent's reasoning and interactions. This is not just a technical gap; it's a business risk.
 
-Why the difference matters for research?
 
-**Instrumentation gap** – Agent logic and algorithm changes daily (new prompts, tools) or by itself at runtime. Relying on in-code hooks means constant churn; kernel-side or side-car tracing stays stable.
-
-**Semantic telemetry** – We need new span attributes (“model.temp”, “tool.role”, “reasoning.loop_id”) and new anomaly detectors (contradiction, persona drift).
-
-**Causal fusion** – Research challenge: merge low-level events with high-level semantic spans into a single timeline so SREs can answer “why my code is not work? what system is it run on and what command have you tried?”
-
-**Tamper resistance** – If prompt-injection turns the agent malicious it may silence its own logs. Out-of-process and kernel level tracing provides an independent audit channel.
+These differences present significant research and engineering challenges. The **instrumentation gap** is a primary concern; as agent logic and algorithms evolve daily, relying on in-code hooks creates constant maintenance churn. A more stable approach, like kernel-side or side-car tracing, is needed. Furthermore, we require a new form of **semantic telemetry**, with attributes that capture the nuances of agent behavior (`model.temp`, `reasoning.loop_id`) and detectors for anomalies like persona drift. A key research challenge lies in **causal fusion**: merging low-level system events with high-level semantic spans into a unified timeline. This would empower developers to answer complex questions about agent behavior. Finally, **tamper resistance** is paramount. If a prompt injection turns an agent malicious, it may silence its own logs. Out-of-process, kernel-level tracing provides an essential, independent audit channel that cannot be easily compromised.
 
 In short, AI-agent observability inherits the **unreliable, emergent behaviour** of AI Agents.  Treat the agent runtime as a semi-trusted black box and observe at the system boundary: that’s where the and opportunities is.
 
@@ -63,44 +54,28 @@ Below is a quick landscape scan of LLM / AI‑agent observability tooling as o
 | 11 | **OpenTelemetry GenAI semantic‑conventions** (2024) | Spec + contrib Python lib (`opentelemetry-instrumentation-openai`) | Standard span/metric names for models, agents, prompts                                     | Apache‑2.0                     | Gives you a lingua‑franca; several tools above emit it. ([OpenTelemetry][18])                                 |
 | 12 | **OpenInference spec** (2023)                       | Tracer wrapper (supports LangChain, LlamaIndex, Autogen…)          | JSON schema for traces + plug‑ins; Phoenix uses it                                         | Apache‑2.0                     | Spec, not a hosted service; pairs well with any OTel backend. ([GitHub][19])                                  |
 
-### What the landscape tells us
+### What the Landscape Tells Us
 
-* **Almost everyone hooks at the SDK layer.** 11 of 12 options require you to wrap or proxy function calls. That’s fine for proof‑of‑concepts but breaks when an agent hot‑swaps prompts or spawns new tools that bypass the wrapper.
-* **OpenTelemetry is becoming the de‑facto wire format.** Traceloop, Honeycomb, Langfuse, PromptLayer, Phoenix (via OpenInference) all speak OTel, which simplifies backend choice.
-* **Semantic evaluation is still early.** Only Phoenix, LangSmith, Langfuse, and Literal ship built‑in LLM‑powered quality checks (toxicity, relevance, hallucination score). Most others focus on latency + cost.
-* **No one does kernel‑level capture.** None of the listed tools observe encrypted TLS buffers or `execve()` calls directly; they trust the application layer to be honest. That leaves a blind spot for prompt‑injection or self‑modifying agents—exactly the gap a zero‑instrumentation eBPF tracer could close.
-* **Specs vs. platforms.** OpenTelemetry GenAI and OpenInference lower the integration tax but don’t store or visualize anything; you still need a backend. Conversely, SaaS platforms bundle storage, query, and eval but lock you into their data shape.
+Our analysis of the current landscape reveals several key trends. The vast majority of existing solutions hook into the SDK layer, requiring developers to wrap or proxy function calls. While this approach is suitable for proof-of-concepts, it becomes brittle when agents dynamically change their behavior. On the positive side, OpenTelemetry is emerging as the de-facto wire format, simplifying backend integration. However, semantic evaluation is still in its early stages, with most tools focusing on latency and cost rather than the quality of the agent's output. Most importantly, none of the surveyed tools perform kernel-level capture; they all trust the application layer to be a reliable source of information. This leaves a significant blind spot for prompt-injection or self-modifying agents, a gap that a zero-instrumentation eBPF tracer is perfectly positioned to fill.
 
 In summary, the current generation of tools provides essential visibility into the application layer, but they operate under the assumption that the application is a reliable narrator of its own story. For AI agents, this assumption is no longer safe.
 
-### How this motivates the “boundary tracing” idea
 
-Because today’s solutions *mostly* live inside the agent process, they inherit the same fragility as the agent code:
+### How This Motivates the “Boundary Tracing” Idea
 
-* **Breakage when you tweak the prompt graph** – each new node needs a decorator.
-* **Evasion by malicious prompts** – compromised agent can drop or fake logs.
-* **Blind to cross‑process side effects** – e.g., writing a shell script then `execve()`‑ing it.
+Because today’s solutions live mostly inside the agent process, they inherit the same fragility as the agent code. This leads to several critical blind spots: breakage when the prompt graph is tweaked, evasion by malicious prompts, and blindness to cross-process side effects like writing and executing a shell script.
 
-A system‑level eBPF tracer that scoops TLS write buffers and syscalls sidesteps those issues:
+A system-level eBPF tracer that scoops TLS write buffers and syscalls sidesteps these issues, providing a more robust and tamper-proof view of the agent's behavior. For example, where an SDK-based tool would miss an agent spawning `curl` directly, a boundary tracer would see the `execve("curl", ...)` syscall and the subsequent network write. Similarly, if an agent mutates its own prompt string before logging, a boundary tracer would capture the raw ciphertext leaving the TLS socket.
 
-| Where today’s SDKs stop                            | What boundary tracing would still see |
-| -------------------------------------------------- | ------------------------------------- |
-| Missing span when agent spawns `curl` directly     | `execve("curl", …)` + network write   |
-| Agent mutates its own prompt string before logging | Raw ciphertext leaving the TLS socket |
-| Sub‑process mis‑uses GPU                           | `ioctl` + CUDA driver calls           |
-
-In other words, existing tools solve the “what happened inside my code?” story; kernel‑side tracing can answer “what actually hit the wire and the OS?”—a complementary, harder‑to‑tamper vantage point.
+In other words, existing tools solve the “what happened inside my code?” story; kernel-side tracing can answer “what actually hit the wire and the OS?”—a complementary, harder-to-tamper vantage point.
 
 That gap is wide open for research and open‑source innovation.
 
-This leads us to a critical insight that forms the foundation of our approach.
+## **Key Insight and Observation**
 
-## **Key Insight and observation**
+All meaningful interactions of an AI agent system traverse two clear boundaries: the network and the kernel. This leads to our key insight:
 
-All meaningful interactions of existing AI-agent system has two clear traverse boundaries:
-
-> AI agent observability must be decoupled from agent internals. **observing from the boundary provides a stable semantic interface**.
->
+> AI agent observability must be decoupled from agent internals. **Observing from the boundary provides a stable, trustworthy, and semantically rich interface.**
 
 ### AI Agent struct
 
