@@ -1,10 +1,14 @@
 # AI Agent observability
 
+Imagine your new AI agent, tasked with a simple research job, starts secretly writing and executing shell scripts. It could be downloading files, probing your network, or worse. How would you even know? This isn't science fiction; it's the new reality of AI-powered systems, and it highlights a critical blind spot in how we monitor them.
+
 ## Problem / Gap
 
 1. **“AI Agents are evolve rapidly and different from traditional software”**
 
 The rise of AI-powered agentic systems is transforming modern software infrastructure. Frameworks like AutoGen, LangChain, Claude Code, and gemini-cli orchestrate large language models (LLMs) to automate software engineering tasks, data analysis pipelines, and multi-agent decision-making. Unlike traditional software components that produce deterministic, easily observable behaviors, these AI-agent systems generate open-ended, non-deterministic outputs, often conditioned on hidden internal states and emergent interactions between multiple agents. Consequently, debugging and monitoring agentic software pose unprecedented observability challenges that classic application performance monitoring (APM) tools cannot address adequately.
+
+This new paradigm requires a fundamental shift in our approach to observability. We are moving from monitoring predictable, stateless services to overseeing dynamic, stateful entities that can learn, adapt, and evolve. The very definition of a failure has changed, expanding from simple crashes and errors to subtle semantic deviations like factual inaccuracies, logical loops, or undesirable emergent behaviors.
 
 ### How AI-agent observability differs from classic software observability
 
@@ -17,6 +21,8 @@ The rise of AI-powered agentic systems is transforming modern software infrastru
 | **Signal source** | Structured logs and metrics you emit on purpose | Often *inside plain-text TLS payloads*; and tools exec logs |
 | **Fix workflow** | Reproduce, attach debugger, patch code | Re-prompt, fine-tune, change tool wiring, tweak guardrails—code may be fine but “thought process” is wrong |
 | **Safety / audit** | Trace shows what code ran | Need evidence of *why* the model said something for compliance / incident reviews |
+
+This table underscores a crucial point: the semantics of AI agent behavior are the new frontier. While traditional APM tools are excellent at tracking the health of infrastructure, they are blind to the quality and safety of the agent's reasoning and interactions. This is not just a technical gap; it's a business risk.
 
 Why the difference matters for research?
 
@@ -35,6 +41,8 @@ In short, AI-agent observability inherits the **unreliable, emergent behaviour**
 Current agent observability techniques rely predominantly on application-level instrumentation—callbacks, middleware hooks, or explicit logging—integrated within each agent framework. While intuitive, this approach suffers three fundamental limitations. First, agent frameworks evolve rapidly, changing prompts, tools, workflow and memory interfaces frequently. They can even modify their self code to create new tools, change prompts and behaviors. Thus, instrumentation embedded within agent codebases incurs significant maintenance overhead. Second, agent runtimes can be tampered with or compromised (e.g., via prompt injection), allowing attackers or buggy behaviors to evade logging entirely.  Fourth, application-level instrumentation cannot reliably capture cross-agent semantics, such as reasoning loops, semantic contradictions, persona shifts, or the behaviors when it’s interacting with it’s environment, especially when interactions cross process or binary boundaries (e.g., external tools or subprocesses).
 
 For security, consider a llm agent first write a bash file with malicious commands (Not exec, safe), and then exec it with basic tool calls (Often allow it). It  needs system wide observability and constrains.
+
+To better understand the existing ecosystem and identify the precise nature of this gap, we conducted a landscape analysis of the current state-of-the-art in LLM and AI agent observability.
 
 ## AI Agent observability landscape
 
@@ -63,6 +71,8 @@ Below is a quick landscape scan of LLM / AI‑agent observability tooling as o
 * **No one does kernel‑level capture.** None of the listed tools observe encrypted TLS buffers or `execve()` calls directly; they trust the application layer to be honest. That leaves a blind spot for prompt‑injection or self‑modifying agents—exactly the gap a zero‑instrumentation eBPF tracer could close.
 * **Specs vs. platforms.** OpenTelemetry GenAI and OpenInference lower the integration tax but don’t store or visualize anything; you still need a backend. Conversely, SaaS platforms bundle storage, query, and eval but lock you into their data shape.
 
+In summary, the current generation of tools provides essential visibility into the application layer, but they operate under the assumption that the application is a reliable narrator of its own story. For AI agents, this assumption is no longer safe.
+
 ### How this motivates the “boundary tracing” idea
 
 Because today’s solutions *mostly* live inside the agent process, they inherit the same fragility as the agent code:
@@ -82,6 +92,8 @@ A system‑level eBPF tracer that scoops TLS write buffers and syscalls sidestep
 In other words, existing tools solve the “what happened inside my code?” story; kernel‑side tracing can answer “what actually hit the wire and the OS?”—a complementary, harder‑to‑tamper vantage point.
 
 That gap is wide open for research and open‑source innovation.
+
+This leads us to a critical insight that forms the foundation of our approach.
 
 ## **Key Insight and observation**
 
