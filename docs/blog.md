@@ -283,20 +283,22 @@ AgentSight demonstrates this approach is not just theoretical but practical and 
 
 ## References
 
-1. LangChain Release History, GitHub (2024)
-2. "Self-Modifying AI Agents," Journal of AI Safety, 2024
-3. "Prompt Injection Attacks," Security Research Conf, 2024
-4. Internal incident report, Fortune 500 company (anonymized)
-5. "Cross-Process Agent Behavior," USENIX Security, 2024
-6. IBM Cost of Data Breach Report 2024
-7. OpenTelemetry GenAI Semantic Conventions (2024)
-8. Linux Kernel Documentation, Process Isolation
-9. RFC 8446: TLS 1.3 Specification
-10. "eBPF - The Future of Kernel Programming," Linux Journal
-11. eBPF uprobe documentation, kernel.org
-12. Linux Tracepoint Documentation
-13. "Verifying eBPF Programs," OSDI 2023
-14. "Performance Analysis of eBPF," ACM SIGOPS 2024
-15. "Agent Security Incidents," AI Safety Institute Report, 2024
-
-[Additional references for tools mentioned in landscape analysis...]
+[1]: https://docs.smith.langchain.com/observability?utm_source=chatgpt.com "Observability Quick Start - ️🛠️ LangSmith - LangChain"
+[2]: https://www.helicone.ai/?utm_source=chatgpt.com "Helicone / LLM-Observability for Developers"
+[3]: https://www.helicone.ai/blog/llm-observability?utm_source=chatgpt.com "LLM Observability: 5 Essential Pillars for Production ... - Helicone"
+[4]: https://ai-sdk.dev/providers/observability/traceloop?utm_source=chatgpt.com "Traceloop - Observability Integrations - AI SDK"
+[5]: https://www.traceloop.com/?utm_source=chatgpt.com "Traceloop - LLM Reliability Platform"
+[6]: https://phoenix.arize.com/?utm_source=chatgpt.com "Home - Phoenix - Arize AI"
+[7]: https://github.com/Arize-ai/phoenix?utm_source=chatgpt.com "Arize-ai/phoenix: AI Observability & Evaluation - GitHub"
+[8]: https://langfuse.com/?utm_source=chatgpt.com "Langfuse"
+[9]: https://langfuse.com/docs/tracing?utm_source=chatgpt.com "LLM Observability & Application Tracing (open source) - Langfuse"
+[10]: https://whylabs.ai/langkit?utm_source=chatgpt.com "LangKit: Open source tool for monitoring large language models ..."
+[11]: https://docs.whylabs.ai/docs/large-language-model-monitoring/?utm_source=chatgpt.com "Large Language Model (LLM) Monitoring | WhyLabs Documentation"
+[12]: https://docs.promptlayer.com/running-requests/traces?utm_source=chatgpt.com "Traces - PromptLayer"
+[13]: https://www.promptlayer.com/platform/observability?utm_source=chatgpt.com "Complete AI Observability Monitor and Trace your LLMs - PromptLayer"
+[14]: https://www.literalai.com/?utm_source=chatgpt.com "Literal AI - RAG LLM observability and evaluation platform"
+[15]: https://www.literalai.com/open-source?utm_source=chatgpt.com "Test, Monitor and Improve LLM apps - Literal AI"
+[16]: https://wandb.ai/site/traces/?utm_source=chatgpt.com "Enterprise-Level LLMOps: W&B Traces - Wandb"
+[17]: https://www.honeycomb.io/ai-llm-observability?utm_source=chatgpt.com "Observability for AI & LLMs - Honeycomb"
+[18]: https://opentelemetry.io/docs/specs/semconv/gen-ai/?utm_source=chatgpt.com "Semantic conventions for generative AI systems | OpenTelemetry"
+[19]: https://github.com/Arize-ai/openinference?utm_source=chatgpt.com "Arize-ai/openinference: OpenTelemetry Instrumentation for ... - GitHub"
