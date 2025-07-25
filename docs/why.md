@@ -4,23 +4,15 @@
 
 AI agents are fundamentally different from traditional software: they exhibit emergent behaviors, make autonomous decisions, and can modify their own execution patterns. This creates critical observability gaps that existing tools cannot address.
 
-**AgentSight introduces boundary tracing**: a framework-agnostic approach that observes AI agents at the system boundary using eBPF technology. By capturing SSL/TLS traffic and process behaviors at the kernel level, we achieve:
-
-- **Framework independence**: Works across LangChain, AutoGen, Claude Code, and emerging frameworks
-- **Tamper resistance**: Kernel-level tracing that compromised agents cannot evade
-- **Semantic visibility**: Full prompt/response capture including streaming Server-Sent Events (SSE)
-- **Low overhead**: Less than 3% CPU impact through efficient eBPF programs
+**AgentSight introduces boundary tracing**: a framework-agnostic approach that observes AI agents at the system boundary using eBPF technology. By capturing SSL/TLS traffic and process behaviors at the kernel level, we achieve framework independence that works across LangChain, AutoGen, Claude Code, and emerging frameworks. The kernel-level tracing provides tamper resistance that compromised agents cannot evade, while maintaining full semantic visibility including prompt/response capture with streaming Server-Sent Events (SSE). Most importantly, this approach maintains less than 3% CPU overhead through efficient eBPF programs.
 
 ## The Problem at a Glance
 
 Consider the security implications: A recent prompt-injection vulnerability in Meta AI's assistant exposed user conversations to unauthorized parties in January 2025[^1]. Traditional application-level monitoring would miss such attacks because compromised agents can disable their own logging. 
 
-The financial stakes are significant:
-- Security breaches cost organizations an average of $4.88 million per incident (IBM, 2024)[^2]
-- LangChain alone shipped 100+ releases in 2024[^3], each potentially breaking instrumentation
-- AI agents can spawn processes, modify code, and interact with systems in unpredictable ways
+The financial stakes are significant. Security breaches cost organizations an average of $4.88 million per incident according to IBM's 2024 report[^2]. Meanwhile, the pace of change in AI frameworks compounds the challenge—LangChain alone shipped over 100 releases in 2024[^3], each potentially breaking existing instrumentation. These AI agents can spawn processes, modify code, and interact with systems in unpredictable ways that traditional monitoring simply cannot capture.
 
-For security, consider a LLM agent that first writes a bash file with malicious commands (not exec, safe), and then executes it with basic tool calls (often allowed). It needs system-wide observability and constraints.
+For security, consider a scenario where an LLM agent first writes a bash file with malicious commands (seemingly safe since it's just writing, not executing), and then executes it through basic tool calls that are often allowed. This attack pattern demonstrates why we need system-wide observability and constraints that go beyond application-level monitoring.
 
 ## From Deterministic Code to Autonomous Agents
 
@@ -48,13 +40,13 @@ In short, AI-agent observability inherits the **unreliable, emergent behaviour**
 
 ## Observability Gap in Today's Tooling
 
-Current agent observability techniques rely predominantly on application-level instrumentation—callbacks, middleware hooks, or explicit logging—integrated within each agent framework. While intuitive, this approach suffers three fundamental limitations:
+Current agent observability techniques rely predominantly on application-level instrumentation—callbacks, middleware hooks, or explicit logging—integrated within each agent framework. While this approach seems intuitive, it suffers from fundamental limitations that make it unsuitable for production AI systems.
 
-1. **Maintenance overhead**: Agent frameworks evolve rapidly, changing prompts, tools, workflow and memory interfaces frequently. They can even modify their own code to create new tools, change prompts and behaviors. Thus, instrumentation embedded within agent codebases incurs significant maintenance overhead.
+The first challenge is maintenance overhead. Agent frameworks evolve at a breakneck pace, constantly changing their prompts, tools, workflows, and memory interfaces. These systems can even modify their own code to create new tools and behaviors dynamically. Any instrumentation embedded within agent codebases becomes a moving target, requiring constant updates just to maintain basic visibility.
 
-2. **Security vulnerabilities**: Agent runtimes can be tampered with or compromised (e.g., via prompt injection), allowing attackers or buggy behaviors to evade logging entirely.
+Security vulnerabilities present an even more serious concern. Agent runtimes can be tampered with or compromised through prompt injection attacks, allowing malicious actors or buggy behaviors to evade logging entirely. When the very system you're monitoring can turn against its own observability layer, application-level instrumentation becomes fundamentally unreliable.
 
-3. **Cross-boundary blindness**: Application-level instrumentation cannot reliably capture cross-agent semantics, such as reasoning loops, semantic contradictions, persona shifts, or the behaviors when it's interacting with its environment, especially when interactions cross process or binary boundaries (e.g., external tools or subprocesses).
+Perhaps most critically, application-level instrumentation suffers from cross-boundary blindness. It cannot reliably capture cross-agent semantics such as reasoning loops, semantic contradictions, or persona shifts. When agent interactions cross process boundaries—spawning external tools, executing subprocesses, or communicating through system calls—traditional instrumentation loses the thread entirely.
 
 ### Current Landscape
 
@@ -77,17 +69,12 @@ Below is a quick landscape scan of LLM / AI‑agent observability tooling as of 
 
 ### What We Still Can't See
 
-Our analysis reveals critical gaps in existing solutions:
 
-- **No kernel-level capture**: All surveyed tools trust the application layer to be a reliable source of information
-- **Framework brittleness**: SDK hooks break when agents change their behavior dynamically  
-- **Process boundary blindness**: Miss agent spawning `curl` directly or executing shell scripts
-- **Tamper vulnerability**: Compromised agents can disable their own logging
-- **Encrypted traffic opacity**: Cannot see actual TLS payloads without proxy configuration
+Our analysis of the current landscape reveals several key trends. The vast majority of existing solutions hook into the SDK layer, requiring developers to wrap or proxy function calls. While this approach is suitable for proof-of-concepts, it becomes brittle when agents dynamically change their behavior. On the positive side, OpenTelemetry is emerging as the de-facto wire format, simplifying backend integration. However, semantic evaluation is still in its early stages, with most tools focusing on latency and cost rather than the quality of the agent's output. Most importantly, none of the surveyed tools perform kernel-level capture; they all trust the application layer to be a reliable source of information. This leaves a significant blind spot for prompt-injection or self-modifying agents, a gap that a zero-instrumentation eBPF tracer is perfectly positioned to fill.
 
-In summary, existing tools solve the "what happened inside my code?" story but cannot answer "what actually hit the wire and the OS?"—a critical gap for security and reliability.
+In summary, Current agent observability techniques rely predominantly on application-level instrumentation—callbacks, middleware hooks, or explicit logging—integrated within each agent framework. While intuitive, this approach suffers three fundamental limitations. First, agent frameworks evolve rapidly, changing prompts, tools, workflow and memory interfaces frequently. They can even modify their self code to create new tools, change prompts and behaviors. Thus, instrumentation embedded within agent codebases incurs significant maintenance overhead. Second, agent runtimes can be tampered with or compromised (e.g., via prompt injection), allowing attackers or buggy behaviors to evade logging entirely. Third, application-level instrumentation cannot reliably capture cross-agent semantics, such as reasoning loops, semantic contradictions, persona shifts, or the behaviors when it's interacting with its environment, especially when interactions cross process or binary boundaries (e.g., external tools or subprocesses).
 
-For security, consider a LLM agent that first writes a bash file with malicious commands (not exec, safe), and then executes it with basic tool calls (often allowed). It needs system-wide observability and constraints.
+Consider a concrete attack scenario: an LLM agent first writes a bash file with malicious commands (seemingly safe since it's just writing, not executing), then executes it through basic tool calls that are often allowed. This pattern exploits the gap between what application-level monitoring sees and what actually happens at the system level, demonstrating why we need system-wide observability and constraints.
 
 ### How This Motivates the "Boundary Tracing" Idea
 
@@ -138,13 +125,9 @@ For **observability purposes** the clean interface is usually the *network bound
 
 ### Why Boundary Beats SDK
 
-By shifting observability to the system-level boundary, we achieve:
+By shifting observability to the system-level boundary, we fundamentally change the game. This approach achieves framework neutrality, working seamlessly across all agent runtimes—LangChain, AutoGen, gemini-cli—without any modifications. The semantic stability comes from capturing prompt-level interactions at the point where they must pass through the OS, regardless of how the framework implements them internally.
 
-• **Framework neutrality**: Works across all agent runtimes without modification
-• **Semantic stability**: Captures prompt-level semantics without chasing framework APIs  
-• **Trust & auditability**: Independent trace that can't be compromised by in-agent malware
-• **Universal causal graph**: Merges agent-level semantics with OS-level events
-• **Zero maintenance**: No SDK updates needed when frameworks change
+Most importantly, boundary tracing provides trust and auditability through an independent observation layer that cannot be compromised by in-agent malware. It creates a universal causal graph that merges agent-level semantics with OS-level events, giving developers the complete picture of what their agents actually do, not just what they claim to do. And unlike SDK-based solutions, this approach requires zero maintenance—no updates needed when frameworks change their APIs or internal structures.
 
 ## Why eBPF Fits the Job
 
@@ -152,16 +135,11 @@ Traditional software observability is instrumentation-first (you insert logs, sp
 
 ### Technical Foundation: eBPF for TLS Interception
 
-One core challenge lies in capturing all prompts and interactions with backend servers from encrypted TLS traffic. Most LLM serving uses TLS to communicate with backend servers, and uses Server-Sent Events (SSE) to stream responses. Using traditional network packet capture tools like tcpdump or wireshark is not sufficient because the traffic is encrypted. Proxy solutions require explicit configuration changes to route agent traffic through the proxy, which may not work with third-party applications or frameworks and can introduce additional latency and complexity.
+The core technical challenge lies in capturing all prompts and interactions from encrypted TLS traffic. Most LLM serving infrastructure uses TLS for communication and Server-Sent Events (SSE) for streaming responses. Traditional network packet capture tools like tcpdump or wireshark cannot decrypt this traffic. Proxy solutions require explicit configuration changes that may not work with third-party applications and introduce additional latency and complexity.
 
-By using eBPF uprobes to hook TLS read and write functions in userspace[^10], we can capture the traffic and decrypt it transparently. This approach:
+eBPF provides an elegant solution through uprobes that hook TLS read and write functions in userspace[^10]. This approach captures the traffic transparently by intercepting plaintext before encryption and after decryption. The technique works universally with any TLS library—OpenSSL, BoringSSL, GnuTLS—through CO-RE (Compile Once - Run Everywhere) technology. It handles streaming protocols like SSE without buffering issues and requires zero application changes or proxy configuration.
 
-- Works with any TLS library (OpenSSL, BoringSSL, GnuTLS) through CO-RE (Compile Once - Run Everywhere)
-- Captures plaintext before encryption and after decryption
-- Supports streaming protocols like SSE without buffering issues
-- Requires no application changes or proxy configuration
-
-Recent work by Keploy[^11] and Pixie Labs[^12] demonstrates mature eBPF-based TLS tracing capabilities. The eunomia.dev tutorial[^13] provides implementation details for SSL/TLS capture using eBPF.
+Recent implementations demonstrate the maturity of this approach. Keploy's work[^11] shows production-ready eBPF-based TLS tracing, while Pixie Labs[^12] has deployed similar technology at scale. The eunomia.dev tutorial[^13] provides detailed implementation guidance for those building SSL/TLS capture systems using eBPF.
 
 ## AgentSight: Architecture & Build
 
@@ -169,57 +147,35 @@ AgentSight implements a zero-instrumentation observability tool for AI agent sys
 
 ### System Architecture
 
-The architecture consists of:
+The architecture centers on eBPF programs that provide the foundational data collection layer. The program captures SSL/TLS traffic using uprobe hooks, and monitors process lifecycle events and file operations. These kernel-level collectors feed into a Rust-based streaming analysis framework that processes events in real-time through a pipeline of pluggable analyzers. The framework includes specialized support for SSE stream reassembly and HTTP parsing, critical for understanding LLM communications.
 
-- **eBPF programs** for TLS interception and process monitoring
-  - `sslsniff.bpf.c`: Captures SSL/TLS traffic with uprobe hooks
-  - `process.bpf.c`: Monitors process lifecycle and file operations
-- **Streaming analysis framework** for real-time event processing
-  - Rust-based pipeline with pluggable analyzers
-  - Support for SSE stream reassembly and HTTP parsing
-- **Semantic analysis engine** for detecting agent-specific anomalies
-  - LLM "sidecar" approach to detect reasoning loops, contradictions, persona shifts
-- **Visualization frontend** for timeline-based exploration
-  - Next.js web interface with real-time event display
+Above this data layer sits a semantic analysis engine that applies AI-specific intelligence to the raw events. Using an LLM "sidecar" approach, it detects subtle anomalies like reasoning loops, contradictions, and persona shifts that would be invisible to traditional monitoring. The visualization layer provides a Next.js web interface for timeline-based exploration, allowing teams to understand agent behavior through intuitive, real-time displays.
 
 ### Implementation Details
 
-AgentSight uses eBPF uprobes to intercept TLS library functions:
-- Hooks into SSL_write/SSL_read for OpenSSL
-- Captures plaintext data before encryption/after decryption  
-- Correlates with process information for attribution
-- Streams events as JSON for real-time processing
+AgentSight's implementation leverages eBPF uprobes to intercept TLS library functions at their most fundamental level. The system hooks directly into SSL_write and SSL_read functions for OpenSSL and equivalent functions in other TLS libraries. This positioning allows it to capture plaintext data at the perfect moment—after decryption on reads and before encryption on writes. Each captured event is correlated with process information for attribution and streamed as JSON for real-time processing.
 
-The system also includes:
-- Binary embedding for easy deployment
-- Automatic cleanup of kernel resources
-- Configurable filtering by process, port, or content
-- Log rotation and compression support
+The deployment architecture emphasizes operational simplicity. Binary embedding enables single-file deployment without complex dependencies. The system automatically manages kernel resource cleanup, preventing resource leaks even during abnormal termination. Operators can configure filtering by process name, port, or content patterns, focusing observation on specific agents or behaviors. Built-in log rotation and compression handle the high-volume data streams that agent monitoring generates.
 
 ## Limitations & Open Challenges
 
 The AI Agent is fundamentally different from traditional software, it's more like a "user in the system" that can do anything. It can spawn subprocesses, use external tools, and even modify its own code. It can also be compromised by malicious prompts or self-modifying code.
 
-One core challenge lies in the **semantic gap** between kernel-level signals and AI agent behaviors. While eBPF can capture comprehensive system-level data with minimal overhead (typically 2-3% CPU usage), translating this into meaningful insights about agent performance requires sophisticated correlation techniques.
-
-Another challenge is capture all prompts and interactions witrh backend server is from encrypted TLS traffic. most llm serving are using TLS to communicate with backend server, and using SSE to stream the response. Using traditional network packet capture tools like tcpdump or wireshark is not enough, because the traffic is encrypted. Proxy the traffic can be a alternative solution, but proxy solutions require explicit configuration changes to route agent traffic through the proxy, which may not work with third party applications or frameworks and can introduce additional latency and complexity. Even if existing eBPF tools can capture the traffic, it lacks support for SSE stream API support.
-
-By using eBPF uprobe to hook the TLS read and write in userspace, we can capture the traffic and decrypt it.
+One core challenge lies in the **semantic gap** between kernel-level signals and AI agent behaviors. While eBPF can capture comprehensive system-level data with minimal overhead (typically 2-3% CPU usage), translating this into meaningful insights about agent performance requires sophisticated correlation techniques. The challenge extends beyond mere data collection—we must bridge the conceptual distance between low-level system events and high-level agent intentions.
 
 ### Technical Limitations
 
-1. **TLS capture complexity**: While eBPF can intercept TLS, it fails for statically linked Go binaries using crypto/tls unless USDT hooks are enabled
-2. **Framework coverage**: Current approach works for HTTP/TLS-speaking agents; systems using gRPC pipes or Unix domain sockets require additional hooks
-3. **Tamper resistance boundaries**: Kernel-level tracing is harder but not impossible to bypass; container escape or LD_PRELOAD can still hide activities
-4. **Semantic gap**: While eBPF can capture comprehensive system-level data with minimal overhead (typically 2-3% CPU usage), translating this into meaningful insights about agent performance requires sophisticated correlation techniques
+Several technical boundaries constrain the current implementation. TLS capture becomes complex when dealing with statically linked Go binaries that use crypto/tls—these require USDT hooks to be enabled for visibility. The framework coverage remains focused on HTTP/TLS-speaking agents, while systems using gRPC pipes or Unix domain sockets require additional hook development.
+
+Tamper resistance, while strong, isn't absolute. Kernel-level tracing is significantly harder to bypass than application-level monitoring, but determined attackers could still use container escape techniques or LD_PRELOAD tricks to hide activities. The semantic gap presents perhaps the most fundamental challenge: while eBPF captures comprehensive system-level data with minimal overhead (typically 2-3% CPU usage), translating these low-level signals into meaningful insights about agent behavior requires sophisticated correlation and analysis techniques.
 
 ### Research Opportunities
 
-- **Semantic anomaly detection**: Using LLMs to analyze captured agent conversations for reasoning loops, contradictions, or policy violations
-- **Cross-agent correlation**: Building causal graphs that connect multiple agents' activities across process boundaries
-- **Performance optimization**: Reducing overhead below 3% while maintaining full semantic capture
-- **Privacy-preserving analysis**: Techniques for monitoring agent behavior without exposing sensitive prompt content
-- **Hardware acceleration**: Leveraging DPUs/SmartNICs for line-rate processing
+The intersection of eBPF and AI observability opens fascinating research directions. Semantic anomaly detection stands out as a prime opportunity—using LLMs to analyze captured agent conversations for reasoning loops, contradictions, or policy violations. This creates a recursive observation problem: using AI to monitor AI, with all the philosophical and practical implications that entails.
+
+Cross-agent correlation presents another rich area for investigation. Building causal graphs that connect multiple agents' activities across process boundaries could reveal emergent behaviors invisible at the individual agent level. Performance optimization remains crucial—pushing overhead below the current 3% threshold while maintaining full semantic capture would enable deployment in even the most performance-sensitive environments.
+
+Privacy-preserving analysis techniques could enable monitoring of agent behavior without exposing sensitive prompt content, addressing a critical concern for enterprise deployments. Finally, hardware acceleration through DPUs and SmartNICs could enable line-rate processing of agent traffic, removing CPU overhead entirely from the host system.
 
 ## Conclusion
 
