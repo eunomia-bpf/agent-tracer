@@ -1,4 +1,8 @@
 import { Event } from '@/types/event';
+import { comparePrompts } from './jsonDiff';
+
+// Store prompt history per process for diff comparison
+const promptHistoryByPid = new Map<number, ParsedEvent[]>();
 
 export interface ProcessNode {
   pid: number;
@@ -25,6 +29,13 @@ export interface ParsedEvent {
   content: string;
   metadata: Record<string, any>;
   isExpanded: boolean;
+  // For prompts, store diff with previous prompt
+  promptDiff?: {
+    diff: string;
+    summary: string;
+    hasChanges: boolean;
+    previousPromptId?: string;
+  };
 }
 
 export interface PromptData {
@@ -274,7 +285,7 @@ function parsePromptEvent(event: Event): ParsedEvent {
   // Simply show the JSON data as-is
   const content = JSON.stringify(displayData, null, 2);
   
-  return {
+  const parsedEvent: ParsedEvent = {
     id: event.id,
     timestamp: event.timestamp,
     type: 'prompt',
@@ -283,6 +294,35 @@ function parsePromptEvent(event: Event): ParsedEvent {
     metadata: { model, method, url: `${data.host || ''}${data.path || ''}`, raw: data },
     isExpanded: false
   };
+  
+  // Get prompt history for this process
+  const pid = event.pid;
+  if (!promptHistoryByPid.has(pid)) {
+    promptHistoryByPid.set(pid, []);
+  }
+  
+  const history = promptHistoryByPid.get(pid)!;
+  
+  // If there's a previous prompt, generate diff
+  if (history.length > 0) {
+    const previousPrompt = history[history.length - 1];
+    const diffResult = comparePrompts(previousPrompt.metadata.raw, data);
+    
+    parsedEvent.promptDiff = {
+      ...diffResult,
+      previousPromptId: previousPrompt.id
+    };
+  }
+  
+  // Add this prompt to history
+  history.push(parsedEvent);
+  
+  // Keep only last 10 prompts per process to avoid memory issues
+  if (history.length > 10) {
+    history.shift();
+  }
+  
+  return parsedEvent;
 }
 
 function parseResponseEvent(event: Event): ParsedEvent {

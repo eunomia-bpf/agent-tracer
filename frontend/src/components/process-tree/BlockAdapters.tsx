@@ -13,22 +13,42 @@ import {
 export function adaptPromptEvent(event: ParsedEvent): UnifiedBlockData {
   const metadata = event.metadata || {};
   
-  // Fold content: short preview
-  const foldContent = event.content && event.content.length > 0 
+  // Update tags to include diff info
+  const tags = ['AI PROMPT', metadata.model, metadata.method].filter(Boolean);
+  if (event.promptDiff?.hasChanges) {
+    tags.push('CHANGED');
+  }
+  
+  // Fold content: show diff summary if available
+  let foldContent = event.content && event.content.length > 0 
     ? event.content.substring(0, 100) + (event.content.length > 100 ? '...' : '')
     : metadata.url || '';
+    
+  if (event.promptDiff?.summary) {
+    foldContent = `📝 ${event.promptDiff.summary}`;
+  }
 
-  // Expanded content: everything
-  const expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
+  // Expanded content: include diff if available
+  let expandedContent = event.content || JSON.stringify(event.metadata, null, 2);
+  
+  if (event.promptDiff?.diff) {
+    expandedContent = `=== CHANGES FROM PREVIOUS PROMPT ===\n${event.promptDiff.diff}\n\n=== FULL CONTENT ===\n${expandedContent}`;
+  }
 
   return {
     id: event.id,
     type: 'prompt',
     timestamp: event.timestamp,
-    tags: ['AI PROMPT', metadata.model, metadata.method].filter(Boolean),
-    bgGradient: 'bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50',
-    borderColor: 'border-blue-400',
-    iconColor: 'text-blue-600',
+    tags,
+    bgGradient: event.promptDiff?.hasChanges 
+      ? 'bg-gradient-to-r from-yellow-50 via-orange-50 to-red-50'
+      : 'bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50',
+    borderColor: event.promptDiff?.hasChanges 
+      ? 'border-yellow-400'
+      : 'border-blue-400',
+    iconColor: event.promptDiff?.hasChanges 
+      ? 'text-yellow-600'
+      : 'text-blue-600',
     icon: SparklesIcon,
     foldContent,
     expandedContent
