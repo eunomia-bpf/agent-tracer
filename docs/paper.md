@@ -326,167 +326,29 @@ AgentSight implements boundary tracing through a modular architecture consisting
 
 The data collection layer consists of two primary eBPF programs that observe system boundaries:
 
-**SSL/TLS Monitoring (sslsniff.bpf.c)**: This program uses uprobes to intercept SSL library functions, capturing decrypted application data before encryption:
-
-```c
-// Core data structure for SSL events
-struct ssl_data_event_t {
-    u64 timestamp_ns;
-    u32 pid;
-    u32 tid;
-    char comm[16];
-    u64 len;
-    u8 is_handshake;
-    u8 data[MAX_DATA_SIZE];
-};
-
-// Attach points for comprehensive SSL monitoring
-SEC("uprobe/SSL_write")
-SEC("uprobe/SSL_read")
-SEC("uprobe/SSL_do_handshake")
-```
+**SSL/TLS Monitoring (sslsniff.bpf.c)**: This program uses uprobes to intercept SSL library functions, capturing decrypted application data before encryption. The program defines a comprehensive event structure containing timestamp, process identifiers, command name, data length, handshake status, and the actual data payload. Attachment points include SSL_write, SSL_read, and SSL_do_handshake functions, providing complete visibility into TLS communications.
 
 The program maintains connection state to correlate read/write operations and implements efficient buffering for large data transfers. Special handling for Server-Sent Events (SSE) enables streaming LLM response capture.
 
-**Process Monitoring (process.bpf.c)**: This program tracks process lifecycle events and system interactions:
-
-```c
-// Comprehensive process event types
-enum process_event_type {
-    PROCESS_EXEC,
-    PROCESS_EXIT,
-    PROCESS_FORK,
-    FILE_OPEN,
-    FILE_DELETE,
-    NETWORK_CONNECT
-};
-
-// Rich metadata capture
-struct process_event {
-    enum process_event_type type;
-    u64 timestamp_ns;
-    u32 pid;
-    u32 ppid;
-    char filename[256];
-    char comm[16];
-    u32 flags;  // Open flags, exit codes, etc.
-};
-```
+**Process Monitoring (process.bpf.c)**: This program tracks process lifecycle events and system interactions. The process monitoring program tracks a comprehensive set of event types including process execution, exit, fork operations, file opens and deletions, and network connections. Each event captures rich metadata: event type, nanosecond timestamp, process and parent process IDs, filenames, command names, and context-specific flags such as open modes or exit codes. This detailed tracking enables reconstruction of complete agent behavior patterns.
 
 ### 5.3 Streaming Analysis Framework
 
 The Rust-based collector implements a sophisticated streaming pipeline for processing eBPF events:
 
-**Runner Architecture**: Runners execute eBPF programs and convert their JSON output into strongly-typed event streams:
+**Runner Architecture**: Runners execute eBPF programs and convert their JSON output into strongly-typed event streams. The Runner architecture defines a trait for executing eBPF programs and converting their JSON output into strongly-typed event streams. Each runner implementation, such as SslRunner, manages configuration options including command filters, expression-based filtering, and embedded binary support. The asynchronous interface enables concurrent execution of multiple eBPF programs while maintaining clean separation between data collection and processing layers.
 
-```rust
-#[async_trait]
-pub trait Runner: Send + Sync {
-    async fn run(
-        &self,
-        tx: mpsc::Sender<Event>,
-        cancel_token: CancellationToken,
-    ) -> Result<()>;
-}
+**Analyzer Chain**: Analyzers process events in a configurable pipeline, enabling flexible data transformation. The Analyzer trait defines the interface for stream processing components. Each analyzer receives events, processes them according to its specific logic, and forwards results to the output channel. ChunkMerger maintains buffers to reassemble fragmented SSL data streams, essential for reconstructing complete LLM interactions from Server-Sent Events. HTTPFilter parses HTTP traffic and applies configurable filters based on methods, paths, headers, and response codes, enabling focused monitoring of specific agent behaviors.
 
-// Example: SSL Runner implementation
-pub struct SslRunner {
-    command: Option<String>,
-    filter_expr: Option<String>,
-    embedded_binary: bool,
-}
-
-impl SslRunner {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    
-    pub fn with_filter(mut self, expr: &str) -> Self {
-        self.filter_expr = Some(expr.to_string());
-        self
-    }
-}
-```
-
-**Analyzer Chain**: Analyzers process events in a configurable pipeline, enabling flexible data transformation:
-
-```rust
-#[async_trait]
-pub trait Analyzer: Send + Sync {
-    async fn analyze(
-        &self,
-        event: Event,
-        output: &mpsc::Sender<Event>,
-    ) -> Result<()>;
-}
-
-// ChunkMerger: Reassembles fragmented SSL data
-pub struct ChunkMerger {
-    buffers: Arc<Mutex<HashMap<u64, ChunkBuffer>>>,
-}
-
-// HTTPFilter: Parses and filters HTTP traffic
-pub struct HTTPFilter {
-    request_filters: Vec<RequestFilter>,
-    response_filters: Vec<ResponseFilter>,
-}
-```
-
-**Event Correlation**: The framework maintains shared state to correlate events across different sources:
-
-```rust
-pub struct Event {
-    pub timestamp: u64,
-    pub source: EventSource,
-    pub pid: Option<u32>,
-    pub tid: Option<u32>,
-    pub correlation_id: Option<String>,
-    pub payload: serde_json::Value,
-}
-```
+**Event Correlation**: The framework maintains shared state to correlate events across different sources. The Event structure serves as the common data format throughout the framework. It contains a nanosecond timestamp for precise ordering, source identification for event origin tracking, optional process and thread IDs for correlation, a correlation ID for linking related events, and a flexible JSON payload accommodating various event types. This unified format enables seamless integration between different data sources and processing stages.
 
 ### 5.4 Web Visualization Interface
 
 The frontend provides real-time visualization of agent activities:
 
-**Timeline Component**: Displays events chronologically with semantic grouping:
+**Timeline Component**: Displays events chronologically with semantic grouping. The frontend Timeline component organizes events chronologically with semantic grouping. Each TimelineEvent contains a unique identifier, timestamp, event type classification, process ID, and type-specific content. The correlation system groups events by process ID and temporal proximity, linking HTTP requests with subsequent process spawns and associating LLM interactions with resulting file operations. This semantic correlation transforms raw events into meaningful agent behavior narratives.
 
-```typescript
-interface TimelineEvent {
-  id: string;
-  timestamp: number;
-  type: 'ssl' | 'process' | 'http';
-  pid: number;
-  content: {
-    request?: HTTPRequest;
-    response?: HTTPResponse;
-    process?: ProcessEvent;
-  };
-  correlation?: string[];
-}
-
-// Semantic correlation logic
-function correlateEvents(events: TimelineEvent[]): EventGroup[] {
-  // Group by PID and temporal proximity
-  // Link HTTP requests with process spawns
-  // Associate LLM interactions with file operations
-}
-```
-
-**Real-time Updates**: The embedded web server provides live event streaming:
-
-```rust
-// Embedded server with broadcast channels
-pub async fn run_server(config: ServerConfig) -> Result<()> {
-    let (tx, _) = broadcast::channel::<Event>(1000);
-    
-    // SSE endpoint for real-time updates
-    let events_route = warp::path!("api" / "events")
-        .and(warp::get())
-        .and(with_broadcaster(tx.clone()))
-        .and_then(event_stream);
-}
-```
+**Real-time Updates**: The embedded web server provides live event streaming. The embedded web server provides real-time event streaming through Server-Sent Events (SSE). Using tokio broadcast channels with a 1000-event buffer, the server maintains connections to multiple clients while efficiently distributing events. The /api/events endpoint delivers live updates to the frontend, enabling real-time visualization without polling overhead.
 
 ### 5.5 Implementation Insights and Challenges
 
@@ -508,41 +370,11 @@ Modern LLM APIs exclusively use TLS encryption, presenting a significant observa
 - **HTTP proxies**: Require explicit configuration, add latency, and may not support all frameworks
 - **Man-in-the-middle**: Security implications and certificate management complexity
 
-Our solution leverages eBPF uprobes on SSL library functions to intercept data at the application layer, after decryption but before transmission:
-
-```c
-// Intercept at the precise point where cleartext exists
-SEC("uprobe/SSL_write")
-int probe_entry_SSL_write(struct pt_regs *ctx) {
-    void *ssl = (void *)PT_REGS_PARM1(ctx);
-    void *buf = (void *)PT_REGS_PARM2(ctx);
-    int num = PT_REGS_PARM3(ctx);
-    
-    // Capture cleartext before encryption
-    process_ssl_data(ctx, ssl, buf, num, SSL_OP_WRITE);
-    return 0;
-}
-```
+Our solution leverages eBPF uprobes on SSL library functions to intercept data at the application layer, after decryption but before transmission. The probe attaches to SSL_write function entry points, extracting function parameters including the SSL context, buffer pointer, and data length. This approach captures cleartext data at the precise moment it exists in memory, before encryption transforms it into unreadable ciphertext.
 
 **Challenge 2: Server-Sent Events (SSE) Stream Reassembly**
 
-LLM providers increasingly use SSE for streaming responses, which fragments data across multiple SSL_read calls. Traditional eBPF tools lack SSE-aware reassembly:
-
-```rust
-// ChunkMerger analyzer reassembles SSE streams
-impl ChunkMerger {
-    async fn merge_sse_chunks(&mut self, event: SslEvent) -> Option<CompleteMessage> {
-        let buffer = self.buffers.get_mut(&event.connection_id)?;
-        buffer.append(event.data);
-        
-        // SSE protocol: double newline indicates message boundary
-        if buffer.contains("\n\n") {
-            return Some(self.extract_complete_message(buffer));
-        }
-        None
-    }
-}
-```
+LLM providers increasingly use SSE for streaming responses, which fragments data across multiple SSL_read calls. Traditional eBPF tools lack SSE-aware reassembly. The ChunkMerger analyzer addresses this challenge by maintaining per-connection buffers, appending incoming data until detecting SSE message boundaries (double newlines). This reassembly process reconstructs complete LLM responses from fragmented network traffic, essential for semantic analysis.
 
 **Challenge 3: Cross-Process Activity Correlation**
 
@@ -552,33 +384,7 @@ AI agents routinely spawn subprocesses, making correlation challenging. A single
 - Multiple child processes for tools
 - Network requests from various processes
 
-Our correlation engine uses multiple signals:
-
-```rust
-pub struct CorrelationEngine {
-    // Temporal correlation window
-    time_window: Duration,
-    // Process tree relationships
-    process_tree: HashMap<u32, ProcessInfo>,
-    // Shared file descriptors
-    fd_inheritance: HashMap<u32, Vec<u32>>,
-    // Working directory tracking
-    cwd_tracking: HashMap<u32, PathBuf>,
-}
-
-impl CorrelationEngine {
-    pub fn correlate_events(&self, events: Vec<Event>) -> Vec<CorrelatedAction> {
-        // Group by process lineage
-        let process_groups = self.group_by_process_tree(&events);
-        
-        // Identify causal chains
-        let causal_chains = self.extract_causal_chains(&process_groups);
-        
-        // Semantic analysis of grouped events
-        self.analyze_semantic_patterns(&causal_chains)
-    }
-}
-```
+Our correlation engine uses multiple signals to address the challenge of cross-process activity correlation. It maintains a temporal correlation window for grouping related events, tracks process tree relationships to understand parent-child hierarchies, monitors file descriptor inheritance for shared resources, and follows working directory changes. The correlation algorithm groups events by process lineage, extracts causal chains based on temporal and resource relationships, then applies semantic analysis to identify high-level agent behavior patterns from low-level system events.
 
 
 ## 6. Evaluation
