@@ -983,23 +983,13 @@ The evolution of AI agents necessitates corresponding advances in observability 
 [17]: https://www.honeycomb.io/ai-llm-observability?utm_source=chatgpt.com "Observability for AI & LLMs - Honeycomb"
 [18]: https://opentelemetry.io/docs/specs/semconv/gen-ai/?utm_source=chatgpt.com "Semantic conventions for generative AI systems | OpenTelemetry"
 [19]: https://github.com/Arize-ai/openinference?utm_source=chatgpt.com "Arize-ai/openinference: OpenTelemetry Instrumentation for ... - GitHub"
-
-20. Gregg, B. (2019). BPF Performance Tools. Addison-Wesley Professional.
-
-21. The eBPF Foundation. (2023). eBPF Documentation. https://ebpf.io/
-
-22. Cilium Project. (2023). eBPF-based Networking, Observability, and Security. https://cilium.io/
-
-23. OpenTelemetry. (2024). Semantic Conventions for GenAI. https://opentelemetry.io/docs/specs/semconv/gen-ai/
-
-24. LangChain. (2024). LangChain Documentation. https://python.langchain.com/
-
-25. Microsoft. (2024). AutoGen: Multi-Agent Conversation Framework. https://github.com/microsoft/autogen
-
-26. Linux Kernel. (2023). BPF Documentation. https://www.kernel.org/doc/html/latest/bpf/
-
-27. Falco. (2023). Cloud Native Runtime Security. https://falco.org/
-
-28. Aqua Security. (2023). Tracee: Runtime Security and Forensics. https://github.com/aquasecurity/tracee
-
-29. New Relic. (2023). Pixie: Instant Kubernetes Observability. https://px.dev/
+[20]: https://www.brendangregg.com/bpf-performance-tools-book.html "BPF Performance Tools"
+[21]: https://ebpf.io/ "eBPF Documentation"
+[22]: https://cilium.io/ "eBPF-based Networking, Observability, and Security"
+[23]: https://opentelemetry.io/docs/specs/semconv/gen-ai/ "Semantic Conventions for GenAI"
+[24]: https://python.langchain.com/ "LangChain Documentation"
+[25]: https://github.com/microsoft/autogen "AutoGen: Multi-Agent Conversation Framework"
+[26]: https://www.kernel.org/doc/html/latest/bpf/ "BPF Documentation"
+[27]: https://falco.org/ "Cloud Native Runtime Security"
+[28]: https://github.com/aquasecurity/tracee "Tracee: Runtime Security and Forensics"
+[29]: https://px.dev/ "Pixie: Instant Kubernetes Observability"
