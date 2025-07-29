@@ -8,7 +8,7 @@ AgentSight is a comprehensive observability framework designed specifically for 
 
 ## Project Structure
 
-- **`src/`**: Core eBPF programs and C utilities
+- **`bpf/`**: Core eBPF programs and C utilities
   - `process.bpf.c` & `process.c`: Process monitoring eBPF program with lifecycle tracking
   - `sslsniff.bpf.c` & `sslsniff.c`: SSL/TLS traffic monitoring eBPF program
   - `test_process_utils.c`: Unit tests for process utilities
@@ -62,8 +62,8 @@ cd collector && cargo clean
 
 ```bash
 # Run individual eBPF programs
-sudo src/process
-sudo src/sslsniff
+sudo bpf/process
+sudo bpf/sslsniff
 
 # Run collector with different modes
 cd collector && cargo run ssl --sse-merge
@@ -78,15 +78,15 @@ cd frontend && npm run dev
 cd collector && cargo run server --log-file trace.log
 
 # Build with AddressSanitizer for debugging
-cd src && make debug
-cd src && make sslsniff-debug
+cd bpf && make debug
+cd bpf && make sslsniff-debug
 ```
 
 ### Testing
 
 ```bash
 # Run C unit tests
-cd src && make test
+cd bpf && make test
 
 # Run Rust tests
 cd collector && cargo test
@@ -158,7 +158,7 @@ eBPF Binary → JSON Output → Runner → Analyzer Chain → Frontend/Storage/O
 
 1. Create `.bpf.c` file with eBPF kernel code using CO-RE (Compile Once - Run Everywhere)
 2. Create `.c` file with userspace loader and JSON output formatting
-3. Add to `APPS` variable in `src/Makefile`
+3. Add to `APPS` variable in `bpf/Makefile`
 4. Include appropriate vmlinux.h for target architecture
 5. Use libbpf for userspace interaction and event handling
 6. Add unit tests following `test_process_utils.c` pattern
@@ -213,7 +213,7 @@ The framework includes sophisticated filtering capabilities for both SSL and HTT
 
 1. **Build eBPF programs**: `make build` (run from root directory)
 2. **Build collector**: `cd collector && cargo build`
-3. **Test changes**: `cd src && make test && cd ../collector && cargo test`
+3. **Test changes**: `cd bpf && make test && cd ../collector && cargo test`
 4. **Run specific components**: Use individual commands for testing (see Development Commands)
 5. **Frontend integration**: Use embedded server or Next.js dev server for UI testing
 
@@ -225,11 +225,13 @@ The collector uses a subcommand-based CLI:
 - `trace`: Combined SSL and Process monitoring with configurable options (most flexible)
 - `record`: Optimized agent activity recording with predefined filters for common use cases
 
+Note: The standalone `server` command mentioned earlier has been integrated into each monitoring command via the `--server` flag.
+
 All commands support integrated web server via `--server` flag and log file serving via `--log-file` parameter. The `trace` command provides the most comprehensive monitoring capabilities with granular control over both SSL and process monitoring.
 
 ## Testing Strategy
 
-- **Unit Tests**: C tests for utility functions (`test_process_utils.c`)
+- **Unit Tests**: C tests for utility functions (`bpf/test_process_utils.c`)
 - **Integration Tests**: Rust tests with `FakeRunner` for full pipeline testing
 - **Manual Testing**: Direct execution of eBPF programs for validation
 - **Frontend Testing**: React component and TypeScript type checking
@@ -248,7 +250,7 @@ All commands support integrated web server via `--server` flag and log file serv
 
 ### Core Dependencies
 - **C/eBPF**: libbpf (v1.0+), libelf, clang (v10+), llvm
-- **Rust**: tokio (async runtime), serde (JSON), clap (CLI), async-trait, chrono
+- **Rust**: tokio (async runtime), serde (JSON), clap (CLI), async-trait, chrono (requires Rust edition 2024)
 - **Frontend**: Next.js 15.3+, React 18+, TypeScript 5+, Tailwind CSS
 - **System**: Linux kernel 4.1+ with eBPF support
 
@@ -273,13 +275,13 @@ All commands support integrated web server via `--server` flag and log file serv
 
 ### Basic SSL Traffic Monitoring
 ```bash
-sudo ./src/sslsniff -p 1234
+sudo ./bpf/sslsniff -p 1234
 cd collector && cargo run ssl --sse-merge -- -p 1234
 ```
 
 ### Process Lifecycle Tracking
 ```bash
-sudo ./src/process -c python
+sudo ./bpf/process -c python
 cd collector && cargo run process -- -c python
 ```
 
@@ -301,8 +303,8 @@ cd collector && cargo run record --comm claude --server-port 8080
 cd frontend && npm run dev
 # Open http://localhost:3000/timeline
 
-# Using embedded web server in collector
-cd collector && cargo run server --log-file trace.log
+# Using embedded web server (integrated into monitoring commands)
+cd collector && cargo run trace --server --log-file trace.log
 # Open http://localhost:8080/timeline
 
 # Server integrated with monitoring
