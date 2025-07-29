@@ -1,22 +1,12 @@
-# compile repo
+# write code
 
+claude --permission-mode acceptEdits -p \'write a script for cpufreq in bpftrace\'
 
-
-## env
-
-```
-# claude --version
-1.0.62 (Claude Code)
-```
-
-on https://github.com/eunomia-bpf/bpf-developer-tutorial
-
-time git submodule update --init --recursive && cd src && make -j8
-
-## Without agentsight
+## without agentsight
 
 ```
-(base) root@gpu01:~/yunwei37# python3 /root/yunwei37/build_benchmark.py
+=== Benchmark completed ===
+(base) root@gpu01:~/yunwei37# python /root/yunwei37/agentsight/docs/experiment/write-code/code_benchmark.py
 === BPF Developer Tutorial Build Benchmark ===
 
 Phase 1: Cloning repositories...
@@ -33,27 +23,27 @@ Phase 2: Building repositories and measuring time...
 
 Build 1/3:
 Building in /root/yunwei37/bpf-tutorial-1...
-Build completed in 92.05 seconds
+Build completed in 22.52 seconds
 
 Build 2/3:
 Building in /root/yunwei37/bpf-tutorial-2...
-Build completed in 92.75 seconds
+Build completed in 21.44 seconds
 
 Build 3/3:
 Building in /root/yunwei37/bpf-tutorial-3...
-Build completed in 92.39 seconds
+Build completed in 23.66 seconds
 
 Phase 2 completed: All builds finished.
 
 === Build Time Results ===
-Build 1: 92.05 seconds
-Build 2: 92.75 seconds
-Build 3: 92.39 seconds
+Build 1: 22.52 seconds
+Build 2: 21.44 seconds
+Build 3: 23.66 seconds
 
-Average build time: 92.40 seconds
-Standard deviation: 0.35 seconds
-Min time: 92.05 seconds
-Max time: 92.75 seconds
+Average build time: 22.54 seconds
+Standard deviation: 1.11 seconds
+Min time: 21.44 seconds
+Max time: 23.66 seconds
 
 Phase 3: Cleaning up...
 Cleaning up /root/yunwei37/bpf-tutorial-1...
@@ -68,10 +58,10 @@ Phase 3 completed: All directories cleaned up.
 === Benchmark completed ===
 ```
 
-## With agentsight
+## with agentsight
 
 ```
-(base) root@gpu01:~/yunwei37# python3 /root/yunwei37/build_benchmark.py
+(base) root@gpu01:~/yunwei37# python /root/yunwei37/agentsight/docs/experiment/write-code/code_benchmark.py
 === BPF Developer Tutorial Build Benchmark ===
 
 Phase 1: Cloning repositories...
@@ -88,27 +78,27 @@ Phase 2: Building repositories and measuring time...
 
 Build 1/3:
 Building in /root/yunwei37/bpf-tutorial-1...
-Build completed in 91.79 seconds
+Build completed in 29.01 seconds
 
 Build 2/3:
 Building in /root/yunwei37/bpf-tutorial-2...
-Build completed in 93.55 seconds
+Build completed in 20.08 seconds
 
 Build 3/3:
 Building in /root/yunwei37/bpf-tutorial-3...
-Build completed in 92.81 seconds
+Build completed in 21.82 seconds
 
 Phase 2 completed: All builds finished.
 
 === Build Time Results ===
-Build 1: 91.79 seconds
-Build 2: 93.55 seconds
-Build 3: 92.81 seconds
+Build 1: 29.01 seconds
+Build 2: 20.08 seconds
+Build 3: 21.82 seconds
 
-Average build time: 92.72 seconds
-Standard deviation: 0.88 seconds
-Min time: 91.79 seconds
-Max time: 93.55 seconds
+Average build time: 23.64 seconds
+Standard deviation: 4.74 seconds
+Min time: 20.08 seconds
+Max time: 29.01 seconds
 
 Phase 3: Cleaning up...
 Cleaning up /root/yunwei37/bpf-tutorial-1...
@@ -121,15 +111,16 @@ Removed /root/yunwei37/bpf-tutorial-3
 Phase 3 completed: All directories cleaned up.
 
 === Benchmark completed ===
-```
+(base) root@gpu01:~/yunwei37# 
+``` 
 
 ## Analysis
 
-Here's the analysis of full repo compilation times:
+Here’s the result of the build benchmark analysis:
 
-* **Without AgentSight**: \~92.40 seconds average
-* **With AgentSight**: \~92.72 seconds average
-* **Absolute overhead**: \~0.32 seconds
-* **Relative overhead**: \~0.35%
+* **Without AgentSight**: \~22.54 seconds average
+* **With AgentSight**: \~23.64 seconds average
+* **Absolute overhead**: \~1.10 seconds
+* **Relative overhead**: \~4.87%
 
-AgentSight introduces only a negligible compile-time overhead during full repository builds.
+This suggests a modest increase (\~5%) in build time when AgentSight is present.
