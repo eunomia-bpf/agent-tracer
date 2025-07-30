@@ -14,7 +14,7 @@ Six specialized Claude Code subagents collaborated on AgentSight development:
 - **Documentation Architecture Reviewer**: Technical documentation and architecture review
 - **Integration Testing Orchestrator**: End-to-end testing and CI/CD coordination
 
-### Key Findings from 12,847 Events
+### Key Findings from 3153 Events
 The monitoring revealed several critical coordination patterns:
 
 1. **Sequential Dependencies**: Frontend agent and test agent were frequently blocked by dependencies, highlighting the need for better parallel development strategies

@@ -1,0 +1,7 @@
+.env
+__pycache__/
+results/
+input.txt
+report.md
+research.md
+output.txt

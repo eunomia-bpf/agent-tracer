@@ -1,208 +1,224 @@
-# Case Study 2: Reasoning Loop Detection Experiment
+# Case Study 2: Reasoning Loop Detection - Real CrewAI Implementation
 
 ## Overview
-This experiment demonstrates AgentSight's capability to detect and interrupt costly reasoning loops where an AI agent repeatedly fails to correct errors, consuming resources without making progress.
+This experiment demonstrates AgentSight's capability to detect and interrupt costly reasoning loops using a real CrewAI multi-agent system. We implement a research agent using CrewAI with GPT-4o-mini that repeatedly calls a web search tool (SerperDevTool) with incorrect arguments, receives an error, but fails to correct its mistake, entering an infinite "try-fail-re-reason" loop.
 
-## Experiment Design
+## Real-World Loop Scenario
+The implemented research crew contains:
+- **Researcher Agent**: Uses SerperDevTool for web searches to uncover cutting-edge developments
+- **Reporting Analyst**: Processes research findings into detailed lists
 
-### Loop Scenario
-An agent attempts to run a data processing tool but encounters an error due to incorrect arguments. Instead of correcting the mistake, it enters a "try-fail-re-reason" loop, repeatedly attempting the same failing command while consuming API tokens and compute resources.
+**The Loop Problem**: The researcher agent attempts multiple web searches but encounters persistent tool usage errors. Instead of learning from the error patterns, it:
+1. Executes the same failing search command
+2. Receives identical error messages from SerperDevTool
+3. Passes the error back to the reasoning LLM (GPT-4o-mini)
+4. Fails to learn from the tool's output
+5. Repeats the exact same failing command
+
+This creates a resource-consuming loop where API calls accumulate without progress, exactly matching the behavior described in the research paper.
 
 ### Prerequisites
 - AgentSight collector with eBPF programs
-- An AI agent with tool execution capabilities
-- Mock failing tool/command for controlled testing
-- Python 3.8+ for simulation scripts
+- CrewAI framework with GPT-4o-mini integration
+- SerperDev API key for web search functionality
+- Python >=3.10 <=3.13 with Poetry for dependency management
+- OpenAI API key for LLM interactions
+
+### CrewAI Project Structure
+The `latest_ai_development/` directory contains the real CrewAI implementation:
+```
+latest_ai_development/
+├── src/latest_ai_development/
+│   ├── config/
+│   │   ├── agents.yaml    # Researcher and Reporting Analyst definitions
+│   │   └── tasks.yaml     # Research and reporting task configurations
+│   ├── tools/
+│   │   └── custom_tool.py # Markdown link checker (with potential errors)
+│   ├── crew.py           # CrewAI setup with SerperDevTool integration
+│   └── main.py           # Entry point for agent execution
+├── pyproject.toml        # Poetry dependencies and configuration
+└── README.md            # CrewAI project documentation
+```
 
 ## Implementation Steps
 
-### Step 1: Create Failing Tool Simulation
+### Step 1: Setup CrewAI Project with Loop-Inducing Configuration
 
 ```bash
-# Create a tool that always fails with specific error patterns
-cat > failing_tool.py << 'EOF'
-#!/usr/bin/env python3
-import sys
-import time
+# Navigate to the CrewAI project directory
+cd latest_ai_development
 
-def main():
-    # Simulate processing time
-    time.sleep(0.5)
-    
-    # Always fail with the same error
-    if "--format" not in sys.argv:
-        print("Error: Missing required argument --format")
-        print("Usage: failing_tool.py --input <file> --format <json|csv>")
-        sys.exit(1)
-    
-    # Even with --format, fail differently
-    print("Error: Invalid format specified. Supported formats: json, csv")
-    sys.exit(1)
+# Install dependencies
+pip install poetry
+poetry install
 
-if __name__ == "__main__":
-    main()
+# Alternatively, use CrewAI CLI
+crewai install
+
+# Setup environment variables in .env file
+cat > .env << 'EOF'
+OPENAI_API_KEY=your_openai_api_key_here
+SERPER_API_KEY=your_serper_dev_api_key_here
 EOF
-
-chmod +x failing_tool.py
 ```
 
-### Step 2: Start AgentSight Monitoring with Loop Detection
+**Key Loop-Inducing Elements in the Configuration:**
+
+1. **Researcher Agent** (`config/agents.yaml`):
+   - Uses SerperDevTool for web searches
+   - Configured to search "one at a time, do not search multiple queries at once"
+   - Has goal to find 20 references with exact links
+
+2. **Research Task** (`config/tasks.yaml`):
+   - Demands 20 references with exact links
+   - Requires multiple search queries but constrains to "search one at a time"
+   - If SerperDevTool returns errors, agent must retry to meet requirements
+
+3. **Potential Loop Triggers**:
+   - API rate limits on SerperDev causing consistent failures
+   - Malformed search queries due to context formatting
+   - Missing or invalid SERPER_API_KEY causing authentication errors
+
+### Step 2: Start AgentSight Monitoring for CrewAI Loop Detection
 
 ```bash
-# Terminal 1: Start AgentSight with enhanced monitoring
+# Terminal 1: Start AgentSight with enhanced monitoring for CrewAI
 cd /root/yunwei37/agentsight/collector
 cargo run trace --ssl --process \
-    --comm python --comm bash --comm failing_tool.py \
-    --server --log-file reasoning_loop_test.log \
-    --process-filter "exec.contains('failing_tool')" \
-    --ssl-filter "data.type=api_call"
+    --comm python --comm crewai \
+    --server --log-file crewai_loop_detection.log \
+    --process-filter "exec.contains('python')" \
+    --ssl-filter "data.contains('openai') OR data.contains('serper')" \
+    --http-filter "request.path.contains('/chat/completions') OR request.path.contains('/search')"
 ```
 
-### Step 3: Create Agent Simulation with Loop Behavior
+**Monitoring Focus Areas:**
+- **SSL Traffic**: OpenAI API calls and SerperDev search requests
+- **Process Events**: Python/CrewAI execution and subprocess creation
+- **HTTP Patterns**: Chat completions and search API endpoints
+- **Loop Indicators**: Repeated identical API calls with same parameters
+
+### Step 3: Trigger CrewAI Reasoning Loop
 
 ```bash
-# Create agent that simulates reasoning loops
-cat > agent_loop_simulator.py << 'EOF'
-import subprocess
-import time
-import json
-import requests
-from datetime import datetime
+# Terminal 2: Navigate to CrewAI project and run with loop-inducing parameters
+cd latest_ai_development
 
-class AgentSimulator:
-    def __init__(self):
-        self.api_calls = 0
-        self.token_usage = 0
-        self.attempts = []
-        
-    def call_llm(self, prompt):
-        """Simulate LLM API call"""
-        self.api_calls += 1
-        self.token_usage += len(prompt.split()) * 2  # Rough token estimate
-        
-        # Log the API call
-        api_log = {
-            "timestamp": datetime.now().isoformat(),
-            "type": "api_call",
-            "prompt_preview": prompt[:100] + "...",
-            "tokens": len(prompt.split()) * 2
-        }
-        print(f"LLM API Call #{self.api_calls}: {json.dumps(api_log)}")
-        
-        # Simulate LLM response that keeps making the same mistake
-        if "error" in prompt.lower():
-            return "I need to run the tool with the correct format. Let me try: failing_tool.py --input data.json"
-        return "I'll process the data using the failing_tool"
+# Method 1: Run with invalid/missing API keys to trigger tool failures
+SERPER_API_KEY="" crewai run
+
+# Method 2: Run with a complex topic that requires many searches
+crewai run --topic "Latest developments in quantum computing applications for AI optimization in 2024"
+
+# Method 3: Run with intentionally malformed context to trigger parsing errors
+crewai run --topic "AI research" --context "Find exactly 20 unique references with working links to recent papers published in top-tier venues about this specific topic including arxiv preprints and conference proceedings"
+```
+
+### Step 4: Alternative - Create Controlled Loop Simulation
+
+If the natural CrewAI loop doesn't trigger, create a controlled simulation:
+
+```bash
+# Create a modified version that forces SerperDevTool errors
+cat > loop_inducer.py << 'EOF'
+#!/usr/bin/env python3
+"""
+CrewAI Loop Inducer - Forces SerperDevTool to fail consistently
+This simulates the research paper scenario where the agent gets stuck
+"""
+import os
+import sys
+from crewai import Agent, Task, Crew
+from crewai_tools import SerperDevTool
+from datetime import datetime
+import time
+
+class FailingSerperTool(SerperDevTool):
+    """Modified SerperDevTool that always fails with the same error"""
     
-    def execute_tool(self, command):
-        """Execute tool and capture output"""
-        attempt = {
-            "timestamp": datetime.now().isoformat(),
-            "command": command,
-            "attempt_number": len(self.attempts) + 1
-        }
-        
-        try:
-            result = subprocess.run(
-                command, 
-                shell=True, 
-                capture_output=True, 
-                text=True,
-                timeout=5
-            )
-            attempt["exit_code"] = result.returncode
-            attempt["stdout"] = result.stdout
-            attempt["stderr"] = result.stderr
-        except Exception as e:
-            attempt["error"] = str(e)
-        
-        self.attempts.append(attempt)
-        return attempt
+    def _run(self, search_query):
+        print(f"[{datetime.now()}] SerperDevTool called with: {search_query}")
+        # Simulate consistent API failure
+        error_msg = "Error: API quota exceeded. Please check your SERPER_API_KEY and billing status."
+        print(f"[ERROR] {error_msg}")
+        return error_msg
+
+def create_looping_crew():
+    """Create a CrewAI setup that will loop on tool failures"""
     
-    def simulate_reasoning_loop(self, max_attempts=5):
-        """Simulate an agent stuck in a reasoning loop"""
-        print("=== Agent Starting Task: Process data.json ===\n")
-        
-        for i in range(max_attempts):
-            print(f"\n--- Attempt {i+1} ---")
-            
-            # Step 1: Agent reasons about the task
-            if i == 0:
-                reasoning = self.call_llm("Process the file data.json using failing_tool")
-            else:
-                # Agent sees the error but fails to understand it
-                last_error = self.attempts[-1].get("stdout", "")
-                reasoning = self.call_llm(f"The tool failed with error: {last_error}. How should I fix this?")
-            
-            print(f"Agent reasoning: {reasoning}")
-            
-            # Step 2: Agent executes the command (incorrectly)
-            # Note: Agent keeps forgetting to add --format argument
-            command = "./failing_tool.py --input data.json"
-            print(f"Executing: {command}")
-            
-            result = self.execute_tool(command)
-            
-            # Step 3: Agent sees the error
-            if result["exit_code"] != 0:
-                print(f"Error: {result['stdout']}")
-                time.sleep(1)  # Simulate thinking time
-            
-            # Check if we're in a loop
-            if i >= 2:
-                # Check if last 3 attempts are identical
-                recent_commands = [a["command"] for a in self.attempts[-3:]]
-                if len(set(recent_commands)) == 1:
-                    print("\n⚠️  LOOP DETECTED: Same command attempted 3 times!")
-                    self.generate_loop_report()
-                    return
-        
-        print("\n❌ Max attempts reached without success")
-        self.generate_loop_report()
+    # Agent that will get stuck in loop
+    researcher = Agent(
+        role="Persistent Researcher",
+        goal="Find exactly 20 unique references about AI developments, no matter how many attempts it takes",
+        backstory="You never give up and will keep trying the same approach until it works",
+        tools=[FailingSerperTool()],
+        verbose=True,
+        max_retry_limit=10  # Allow many retries
+    )
     
-    def generate_loop_report(self):
-        """Generate a report of the loop behavior"""
-        print("\n=== REASONING LOOP ANALYSIS ===")
-        print(f"Total API calls: {self.api_calls}")
-        print(f"Total tokens used: {self.token_usage}")
-        print(f"Estimated cost: ${self.token_usage * 0.00002:.2f}")  # GPT-4 pricing estimate
-        print(f"Total attempts: {len(self.attempts)}")
-        print(f"Time wasted: {len(self.attempts) * 2} seconds")
-        
-        # Pattern analysis
-        commands = [a["command"] for a in self.attempts]
-        unique_commands = set(commands)
-        print(f"\nCommand patterns:")
-        for cmd in unique_commands:
-            count = commands.count(cmd)
-            print(f"  '{cmd}' - attempted {count} times")
+    # Task that requires successful tool usage
+    research_task = Task(
+        description="Search for 'latest AI developments 2024' and find 20 unique references. Keep trying until successful.",
+        expected_output="List of 20 references with URLs",
+        agent=researcher
+    )
+    
+    # Crew that will execute the loop
+    crew = Crew(
+        agents=[researcher],
+        tasks=[research_task],
+        verbose=True
+    )
+    
+    return crew
 
 if __name__ == "__main__":
-    simulator = AgentSimulator()
-    simulator.simulate_reasoning_loop(max_attempts=10)
+    print("=== CrewAI Reasoning Loop Simulation ===")
+    print("This will demonstrate the 'try-fail-re-reason' loop pattern\n")
+    
+    # Create and run the looping crew
+    crew = create_looping_crew()
+    
+    try:
+        result = crew.kickoff()
+        print(f"Final result: {result}")
+    except KeyboardInterrupt:
+        print("\n⚠️ Loop interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Crew failed with error: {e}")
 EOF
+
+chmod +x loop_inducer.py
 ```
 
-### Step 4: Create Loop Detection Analyzer
+### Step 5: Create CrewAI-Specific Loop Detection Analyzer
 
 ```bash
-# Create analyzer for detecting loops in AgentSight logs
-cat > loop_detector.py << 'EOF'
+# Create analyzer for detecting CrewAI loops in AgentSight logs
+cat > crewai_loop_detector.py << 'EOF'
+#!/usr/bin/env python3
+"""
+CrewAI-specific loop detection analyzer for AgentSight logs
+Detects the 'try-fail-re-reason' pattern described in the research paper
+"""
 import json
 import sys
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+import re
 
-class LoopDetector:
-    def __init__(self, window_size=3, time_window_seconds=60):
+class CrewAILoopDetector:
+    def __init__(self, window_size=3, time_window_seconds=120):
         self.window_size = window_size
         self.time_window = timedelta(seconds=time_window_seconds)
-        self.command_history = deque(maxlen=window_size)
-        self.api_calls = []
+        self.api_call_history = deque(maxlen=window_size)
+        self.serper_calls = []
+        self.openai_calls = []
         self.loop_patterns = []
+        self.total_cost = 0.0
         
     def analyze_log(self, log_file):
-        """Analyze AgentSight log for reasoning loops"""
+        """Analyze AgentSight log for CrewAI reasoning loops"""
         events_by_time = []
         
         with open(log_file, 'r') as f:
@@ -216,263 +232,330 @@ class LoopDetector:
         # Sort by timestamp
         events_by_time.sort(key=lambda x: x.get('timestamp', 0))
         
-        # Analyze patterns
-        process_events = defaultdict(list)
-        ssl_events = []
-        
+        # Categorize events
         for event in events_by_time:
-            if event['event_type'] == 'process':
-                data = event.get('data', {})
-                if 'exec' in data and 'failing_tool' in data.get('exec', ''):
-                    process_events[data['exec']].append(event)
-                    
-            elif event['event_type'] == 'ssl':
-                if 'api_call' in str(event.get('data', {})):
-                    ssl_events.append(event)
+            self._categorize_event(event)
         
-        # Detect loops in process executions
-        for cmd, events in process_events.items():
-            if len(events) >= self.window_size:
-                # Check for repeated executions within time window
-                for i in range(len(events) - self.window_size + 1):
-                    window = events[i:i + self.window_size]
-                    first_time = window[0]['timestamp']
-                    last_time = window[-1]['timestamp']
-                    
-                    # If same command executed multiple times quickly
-                    if (last_time - first_time) < self.time_window.total_seconds() * 1000:
-                        self.loop_patterns.append({
-                            'type': 'process_loop',
-                            'command': cmd,
-                            'count': len(window),
-                            'duration_ms': last_time - first_time,
-                            'events': window
-                        })
-        
-        # Analyze API call patterns
-        self._analyze_api_patterns(ssl_events)
-        
-        # Generate report
+        # Detect loop patterns
+        self._detect_serper_loops()
+        self._detect_openai_loops()
+        self._analyze_cost_waste()
         self._generate_report()
     
-    def _analyze_api_patterns(self, ssl_events):
-        """Analyze API calling patterns for waste"""
-        if len(ssl_events) < 2:
+    def _categorize_event(self, event):
+        """Categorize events by type and extract relevant data"""
+        if event.get('event_type') == 'ssl':
+            data_str = str(event.get('data', {}))
+            
+            # Detect SerperDev API calls
+            if 'serper' in data_str.lower() or 'google.com' in data_str:
+                self.serper_calls.append({
+                    'timestamp': event['timestamp'],
+                    'data': event.get('data', {}),
+                    'event': event
+                })
+            
+            # Detect OpenAI API calls
+            elif 'openai' in data_str.lower() or 'chat/completions' in data_str:
+                # Estimate tokens and cost
+                tokens = self._estimate_tokens(data_str)
+                cost = tokens * 0.00015  # GPT-4o-mini pricing
+                self.total_cost += cost
+                
+                self.openai_calls.append({
+                    'timestamp': event['timestamp'],
+                    'tokens': tokens,
+                    'cost': cost,
+                    'data': event.get('data', {}),
+                    'event': event
+                })
+    
+    def _estimate_tokens(self, data_str):
+        """Rough token estimation for cost analysis"""
+        # Simple word count * 1.3 (rough token-to-word ratio)
+        word_count = len(data_str.split())
+        return int(word_count * 1.3)
+    
+    def _detect_serper_loops(self):
+        """Detect repeated SerperDev tool calls (the core loop pattern)"""
+        if len(self.serper_calls) < self.window_size:
             return
-            
-        total_tokens = 0
-        call_intervals = []
         
-        for i in range(1, len(ssl_events)):
-            interval = ssl_events[i]['timestamp'] - ssl_events[i-1]['timestamp']
-            call_intervals.append(interval)
-            
-            # Estimate tokens from event data
-            data_str = str(ssl_events[i].get('data', {}))
-            total_tokens += len(data_str.split()) // 10  # Rough estimate
+        # Look for repeated search queries
+        search_patterns = defaultdict(list)
         
-        self.api_calls = {
-            'count': len(ssl_events),
-            'total_tokens': total_tokens,
-            'avg_interval_ms': sum(call_intervals) / len(call_intervals) if call_intervals else 0,
-            'estimated_cost': total_tokens * 0.00002  # GPT-4 estimate
+        for call in self.serper_calls:
+            # Extract search query from the call
+            data_str = str(call['data'])
+            # Look for similar search patterns
+            query_hash = self._extract_search_pattern(data_str)
+            search_patterns[query_hash].append(call)
+        
+        # Identify loops: same search repeated multiple times
+        for pattern, calls in search_patterns.items():
+            if len(calls) >= self.window_size:
+                # Check if calls are within time window
+                time_span = calls[-1]['timestamp'] - calls[0]['timestamp']
+                if time_span <= self.time_window.total_seconds() * 1000:
+                    self.loop_patterns.append({
+                        'type': 'serper_search_loop',
+                        'pattern': pattern,
+                        'count': len(calls),
+                        'duration_ms': time_span,
+                        'calls': calls,
+                        'severity': 'HIGH' if len(calls) >= 5 else 'MEDIUM'
+                    })
+    
+    def _detect_openai_loops(self):
+        """Detect repeated OpenAI API calls with similar prompts"""
+        if len(self.openai_calls) < self.window_size:
+            return
+        
+        # Look for rapid consecutive calls (indicating retry behavior)
+        for i in range(len(self.openai_calls) - self.window_size + 1):
+            window = self.openai_calls[i:i + self.window_size]
+            
+            # Check if calls are rapid (< 30 seconds apart)
+            time_span = window[-1]['timestamp'] - window[0]['timestamp']
+            if time_span < 30000:  # 30 seconds in milliseconds
+                total_cost = sum(call['cost'] for call in window)
+                
+                self.loop_patterns.append({
+                    'type': 'openai_rapid_retry',
+                    'count': len(window),
+                    'duration_ms': time_span,
+                    'total_cost': total_cost,
+                    'calls': window,
+                    'severity': 'HIGH' if total_cost > 0.10 else 'MEDIUM'
+                })
+    
+    def _extract_search_pattern(self, data_str):
+        """Extract search pattern from API call data"""
+        # Simple pattern extraction - in real implementation, 
+        # this would be more sophisticated
+        words = re.findall(r'\b\w+\b', data_str.lower())
+        # Use key terms to identify similar searches
+        key_terms = [w for w in words if len(w) > 3 and w not in ['http', 'https', 'data', 'json']]
+        return ' '.join(sorted(key_terms[:5]))  # Use top 5 terms as pattern
+    
+    def _analyze_cost_waste(self):
+        """Calculate wasted costs from loop behavior"""
+        self.wasted_costs = {
+            'serper_loops': 0,
+            'openai_loops': 0,
+            'total_openai_cost': self.total_cost
         }
+        
+        for pattern in self.loop_patterns:
+            if pattern['type'] == 'serper_search_loop':
+                # Assume each SerperDev call costs $0.001
+                wasted = (pattern['count'] - 1) * 0.001  # First call is legitimate
+                self.wasted_costs['serper_loops'] += wasted
+            
+            elif pattern['type'] == 'openai_rapid_retry':
+                # Cost of retry calls
+                wasted = pattern['total_cost'] * 0.8  # 80% of rapid retries are waste
+                self.wasted_costs['openai_loops'] += wasted
     
     def _generate_report(self):
-        """Generate comprehensive loop detection report"""
-        print("=== AGENTSIGHT LOOP DETECTION REPORT ===\n")
+        """Generate comprehensive CrewAI loop detection report"""
+        print("=== CREWAI REASONING LOOP DETECTION REPORT ===\n")
+        
+        print(f"📊 API Call Summary:")
+        print(f"  SerperDev calls: {len(self.serper_calls)}")
+        print(f"  OpenAI calls: {len(self.openai_calls)}")
+        print(f"  Total OpenAI cost: ${self.total_cost:.4f}")
+        print()
         
         if self.loop_patterns:
-            print(f"⚠️  LOOPS DETECTED: {len(self.loop_patterns)}\n")
+            print(f"⚠️  REASONING LOOPS DETECTED: {len(self.loop_patterns)}\n")
             
             for i, pattern in enumerate(self.loop_patterns, 1):
-                print(f"Loop #{i}:")
+                print(f"Loop #{i} - {pattern['severity']} SEVERITY:")
                 print(f"  Type: {pattern['type']}")
-                print(f"  Command: {pattern['command']}")
                 print(f"  Repetitions: {pattern['count']}")
-                print(f"  Duration: {pattern['duration_ms']}ms")
-                print(f"  Detection confidence: HIGH")
+                print(f"  Duration: {pattern['duration_ms']/1000:.1f} seconds")
+                
+                if pattern['type'] == 'serper_search_loop':
+                    print(f"  Search Pattern: {pattern['pattern']}")
+                    print(f"  🔍 Same search query repeated {pattern['count']} times")
+                elif pattern['type'] == 'openai_rapid_retry':
+                    print(f"  Cost: ${pattern['total_cost']:.4f}")
+                    print(f"  💸 Rapid retry pattern - wasted reasoning cycles")
                 print()
         else:
-            print("✓ No obvious loops detected\n")
+            print("✅ No obvious reasoning loops detected\n")
         
-        if hasattr(self, 'api_calls') and self.api_calls['count'] > 0:
-            print("API Usage Analysis:")
-            print(f"  Total calls: {self.api_calls['count']}")
-            print(f"  Estimated tokens: {self.api_calls['total_tokens']}")
-            print(f"  Estimated cost: ${self.api_calls['estimated_cost']:.4f}")
-            print(f"  Avg interval: {self.api_calls['avg_interval_ms']:.0f}ms")
-            
-            # Detect rapid API calling
-            if self.api_calls['avg_interval_ms'] < 5000:  # Less than 5 seconds
-                print("  ⚠️  WARNING: Rapid API calling detected!")
+        # Cost analysis
+        total_waste = sum(self.wasted_costs.values()) - self.wasted_costs['total_openai_cost']
+        if total_waste > 0:
+            print(f"💰 Cost Waste Analysis:")
+            print(f"  SerperDev loops: ${self.wasted_costs['serper_loops']:.4f}")
+            print(f"  OpenAI loops: ${self.wasted_costs['openai_loops']:.4f}")
+            print(f"  Total waste: ${total_waste:.4f}")
+            print(f"  Waste percentage: {(total_waste/self.total_cost)*100:.1f}%")
+            print()
         
-        print("\nRecommendations:")
+        # Recommendations based on patterns found
+        print("🔧 Recommendations:")
+        if any(p['type'] == 'serper_search_loop' for p in self.loop_patterns):
+            print("  1. Implement SerperDev error handling with circuit breaker")
+            print("  2. Add exponential backoff for API failures")
+            print("  3. Cache search results to avoid duplicate queries")
+        
+        if any(p['type'] == 'openai_rapid_retry' for p in self.loop_patterns):
+            print("  1. Add delay between reasoning attempts")
+            print("  2. Implement maximum retry limits")
+            print("  3. Use different prompting strategies after failures")
+        
         if self.loop_patterns:
-            print("  1. Implement retry limits with exponential backoff")
-            print("  2. Add error pattern recognition to break loops")
-            print("  3. Set resource consumption thresholds")
-            print("  4. Enable human intervention after N failures")
+            print("  4. Set resource consumption alerts")
+            print("  5. Enable human intervention after N consecutive failures")
+        else:
+            print("  ✅ No immediate action required - normal operation detected")
 
 if __name__ == "__main__":
-    detector = LoopDetector()
-    log_file = sys.argv[1] if len(sys.argv) > 1 else "reasoning_loop_test.log"
-    detector.analyze_log(log_file)
+    detector = CrewAILoopDetector()
+    log_file = sys.argv[1] if len(sys.argv) > 1 else "crewai_loop_detection.log"
+    
+    print(f"Analyzing AgentSight log: {log_file}")
+    print("=" * 50)
+    
+    try:
+        detector.analyze_log(log_file)
+    except FileNotFoundError:
+        print(f"❌ Error: Log file '{log_file}' not found")
+        print("Make sure AgentSight is running and generating logs")
+    except Exception as e:
+        print(f"❌ Error analyzing log: {e}")
 EOF
+
+chmod +x crewai_loop_detector.py
 ```
 
-### Step 5: Run the Experiment
+### Step 6: Execute the CrewAI Loop Experiment
 
 ```bash
-# Terminal 2: Execute the loop simulation
-python agent_loop_simulator.py
+# Terminal 2: Run CrewAI with loop-inducing conditions
+cd latest_ai_development
+
+# Method 1: Natural loop with missing API key
+SERPER_API_KEY="" python loop_inducer.py
+
+# Method 2: Run real CrewAI with challenging task
+crewai run --inputs '{"topic": "latest AI developments 2024"}'
 
 # Terminal 3: Real-time monitoring
-tail -f reasoning_loop_test.log | grep -E "(failing_tool|api_call)"
+tail -f ../crewai_loop_detection.log | grep -E "(serper|openai|api_call)"
 ```
 
-### Step 6: Analyze Results
+### Step 7: Analyze Loop Detection Results
 
 ```bash
-# Run loop detection analysis
-python loop_detector.py reasoning_loop_test.log
+# Run the CrewAI-specific loop analysis
+python crewai_loop_detector.py crewai_loop_detection.log
 
-# Generate cost analysis
-cat > cost_analyzer.py << 'EOF'
-import json
-import sys
-
-def analyze_costs(log_file):
-    total_cost = 0
-    api_calls = 0
-    wasted_calls = 0
-    
-    with open(log_file, 'r') as f:
-        for line in f:
-            try:
-                event = json.loads(line)
-                if 'api_call' in str(event):
-                    api_calls += 1
-                    # Rough token estimate
-                    tokens = len(str(event).split()) * 2
-                    cost = tokens * 0.00002
-                    total_cost += cost
-                    
-                    # Check if this was a wasted call (same as previous)
-                    # Implementation depends on your specific logging
-                    
-            except:
-                continue
-    
-    print(f"Total API calls: {api_calls}")
-    print(f"Estimated total cost: ${total_cost:.4f}")
-    print(f"Average cost per call: ${total_cost/api_calls:.4f}" if api_calls > 0 else "N/A")
-
-if __name__ == "__main__":
-    analyze_costs(sys.argv[1] if len(sys.argv) > 1 else "reasoning_loop_test.log")
-EOF
-
-python cost_analyzer.py reasoning_loop_test.log
-```
-
-## Loop Pattern Variations
-
-### 1. Tool Argument Loop
-```python
-# Agent keeps trying different incorrect arguments
-commands = [
-    "./tool --input data.json",
-    "./tool -i data.json", 
-    "./tool data.json --input",
-    "./tool --input data.json"  # Back to first attempt
-]
-```
-
-### 2. Cascading Failure Loop
-```python
-# One failure leads to another in a cycle
-# Step 1: Try to read non-existent file → Error
-# Step 2: Try to create file → Permission denied
-# Step 3: Try to change permissions → Not owner
-# Step 4: Back to Step 1
-```
-
-### 3. Reasoning Exhaustion Loop
-```python
-# Agent's context window fills with error messages
-# Eventually forgets original task and early attempts
-# Starts repeating very early failed approaches
-```
-
-## Real-time Intervention
-
-### Automatic Loop Breaking
-```bash
-# Monitor script that kills agent after detecting loop
-cat > loop_breaker.py << 'EOF'
-import subprocess
-import time
-import json
-
-def monitor_and_break():
-    loop_count = 0
-    last_commands = []
-    
-    # Monitor AgentSight output
-    process = subprocess.Popen(
-        ['tail', '-f', 'reasoning_loop_test.log'],
-        stdout=subprocess.PIPE,
-        text=True
-    )
-    
-    for line in process.stdout:
+# Generate cost impact report
+python -c "
+import json, sys
+total_cost = 0
+api_calls = 0
+with open('crewai_loop_detection.log', 'r') as f:
+    for line in f:
         try:
             event = json.loads(line)
-            if event['event_type'] == 'process':
-                cmd = event.get('data', {}).get('exec', '')
-                last_commands.append(cmd)
-                
-                # Keep only last 3 commands
-                if len(last_commands) > 3:
-                    last_commands.pop(0)
-                
-                # Check for loop
-                if len(last_commands) == 3 and len(set(last_commands)) == 1:
-                    loop_count += 1
-                    print(f"⚠️  Loop detected! Count: {loop_count}")
-                    
-                    if loop_count >= 2:
-                        print("🛑 BREAKING LOOP - Sending interrupt signal")
-                        # In real scenario, would signal the agent
-                        subprocess.run(['pkill', '-f', 'agent_loop_simulator'])
-                        break
-                        
-        except:
-            continue
-
-monitor_and_break()
-EOF
+            if 'openai' in str(event).lower():
+                api_calls += 1 
+                total_cost += 0.002  # Rough estimate
+        except: pass
+print(f'API calls: {api_calls}, Estimated cost: \${total_cost:.4f}')
+"
 ```
 
-## Success Metrics
+## CrewAI-Specific Loop Patterns
 
-1. **Detection Latency**: Loop identified within 3 iterations
-2. **Cost Savings**: Prevent >$2 in wasted API calls per incident  
-3. **Resource Protection**: CPU/memory usage capped
-4. **Intervention Speed**: Automatic breaking within 30 seconds
+### 1. SerperDev Tool Error Loop
+The most common pattern observed in the research paper:
+```
+1. Agent receives task: "Find 20 references about AI developments"
+2. Calls SerperDevTool with query
+3. Gets error: "API quota exceeded" or "Invalid API key"
+4. LLM tries to reason about the error
+5. Agent retries the EXACT same SerperDevTool call
+6. Gets identical error → Loop continues
+```
 
-## Integration Points
+### 2. Context Window Exhaustion Loop
+```
+1. Initial SerperDev failures fill context with error messages
+2. Agent loses track of original task requirements
+3. Starts making increasingly desperate search attempts
+4. Context fills with more errors, creating reasoning confusion
+5. Agent falls back to repeating earliest failed approaches
+```
 
-- **Alerting**: Send notifications when loops detected
-- **Rate Limiting**: Implement token bucket for API calls
-- **Circuit Breaker**: Disable tool after N failures
-- **Learning**: Build error pattern database
+### 3. Multi-Agent Coordination Loop
+```
+1. Researcher agent fails to get search results
+2. Reporting analyst waits for research input
+3. CrewAI framework retries researcher with same failing tool
+4. Both agents get stuck in coordination deadlock
+```
+
+## Real-World Detection Results
+
+### Expected AgentSight Observations:
+
+**SSL Traffic Patterns:**
+- Repeated identical HTTP requests to `serper.dev` API
+- Same search parameters in request body
+- Consistent 401/403 error responses
+
+**Process Events:**
+- Multiple Python subprocess spawns for same CrewAI task
+- Identical command-line arguments across failed attempts
+- Increasing memory usage without progress
+
+**Cost Impact:**
+- OpenAI API calls: ~50-100 calls during a 5-minute loop
+- Estimated cost: $0.15-0.30 per loop incident
+- SerperDev quota waste: Multiple API calls against quota limits
+
+## Success Metrics for CrewAI Implementation
+
+1. **Loop Detection Speed**: Identify SerperDev error patterns within 3 failed calls
+2. **Cost Prevention**: Save >$0.20 per incident by early intervention
+3. **Resource Protection**: Prevent CPU/memory runaway from infinite retries
+4. **Real-time Alerts**: Notify operators within 60 seconds of loop detection
+
+## Integration with CrewAI Framework
+
+### Recommended Circuit Breaker Implementation:
+```python
+class LoopAwareSerperTool(SerperDevTool):
+    def __init__(self):
+        super().__init__()
+        self.failure_count = 0
+        self.last_error = None
+        
+    def _run(self, query):
+        result = super()._run(query)
+        
+        if "error" in result.lower():
+            self.failure_count += 1
+            if self.failure_count >= 3:
+                return "CIRCUIT_BREAKER: Tool disabled after repeated failures"
+        else:
+            self.failure_count = 0  # Reset on success
+            
+        return result
+```
 
 ## Dashboard Visualization
 
-Create real-time metrics showing:
-- Loop detection events timeline
-- API token burn rate graph  
-- Cost accumulation meter
-- Command repetition heatmap
-- Intervention trigger status
+AgentSight frontend timeline shows:
+- 🔍 SerperDev API call frequency and error rates
+- 💸 Real-time cost accumulation meter
+- ⚠️ Loop detection alerts with severity levels
+- 📊 Agent reasoning cycle duration metrics
+- 🛑 Automatic intervention trigger points

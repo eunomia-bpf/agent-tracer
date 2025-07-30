@@ -1,0 +1,57 @@
+# src/my_project/config/tasks.yaml
+research_task:
+  description: >
+    Conduct a thorough research through the internet about {topic}. Given the current year is 2024. 
+    You can use mutiple queries to find different kinds of information, such as the original, 
+    the current development, the similar things related to the context, the supporting materials 
+    or references, etc. Make sure you search is related and follow the instruction in:
+    {context}.
+    search one at a time, do not search multiple queries at once. multiple queries need to be done in different steps.
+  expected_output: >
+    A list with 20 interesting facts, points, reference of the relevant information about {topic}.
+    You should have describtions and include all reference and exact links to the sources in where it was mentioned.
+    You should have 20 reference. 
+    The information must related to the context and instructions of {context}.
+  agent: researcher
+  output_file: research.md
+
+# summary_task:
+#   description: >
+#     Summarize the research you got into several bullet points, highlighting the most important information
+#     and merging similar points.
+#   expected_output: >
+#     A summary list with 5-10 bullet points of the most important and interesting information about {topic}.
+#   agent: researcher
+
+reporting_task:
+  description: >
+    Review the context you got, check the fact of each point, and form a better list based on the research you got.
+    You can add more relevant information or anything interesting you found related to the context.
+    Make sure the list is:
+    1. detailed than before
+    2. all link and contents are correct
+    3. contains any and all relevant information and links. Do not include any irrelevant information that cannot connect to the context.
+    4. Do not leave out any reference or relevant information without link. if have, serach again.
+  expected_output: >
+    A fully list related to the mains topics and context, each point is detailed and correct.
+    It should all contain the supporting materials and references,
+    or other interesting things, like recent development, etc.
+    You should include all reference and links in where it was mentioned.
+    You should give me the list in Markdown format without '```' code block.
+  agent: reporting_analyst
+  output_file: output.txt
+
+# blog_task:
+#   description: >
+#     Write a blog post based on the report you got. You should choose a style first, such as 
+#     Conversational Style(Write as if you are talking directly to the reader, using oral language),
+#     Storytelling Style(Start with a personal story or a real-world example that relates to the topic),
+#     Provocative Style(Start with a bold or surprising statement to grab attention, then build the article around it),
+#     Listicle Style(People love lists because they are easy to scan and digest.),
+#     And then think a catchy title.
+#     Make sure the blog is engaging, informative, detail and easy to read.
+#   expected_output: >
+#     A blog post with a catchy title, clear struct, engaging content and easy to read.
+#     You should use citations like [1] and include all reference at the end of blog post.
+#   agent: tech_writer
+#   output_file: blog.md
