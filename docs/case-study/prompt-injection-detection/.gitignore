@@ -1,0 +1,18 @@
+# Test environment directory
+test_environment/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# Analysis output
+/tmp/analyze_trace.py
+/tmp/prompt_injection_trace.log
