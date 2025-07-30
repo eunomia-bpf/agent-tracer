@@ -93,6 +93,12 @@ Check multiple sources for attack indicators:
 # Open: http://localhost:8080/
 ```
 
+The collector also print the following metrics:
+
+```
+[HTTPFilter Global Metrics] Total: 521, Filtered: 484, Passed: 37
+```
+
 ### Step 6: Cleanup
 
 ```bash
