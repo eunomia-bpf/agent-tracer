@@ -1,0 +1,298 @@
+AgentSight: System-Level Observability for AI Agents
+                    Using eBPF
+Abstract                                                             execution paths, agents use LLMs and autonomous tools
+Modern software infrastructure increasingly relies on LLM            to dynamically generate code and spawn arbitrary subpro-
+agents for development and maintenance, such as Claude               cesses. This makes it hard for existing observability tools
+Code and Gemini-cli. However, these AI agents differ fun-            to distinguish benign operations from catastrophic failures.
+damentally from traditional deterministic software, posing a         Consider an agent tasked with code refactoring that, due to
+significant challenge to conventional monitoring and debug-          a malicious prompt it reads from external url in the search
+ging. This creates a critical semantic gap: existing tools ob-       result when search for API documents, instead injects a
+serve either an agent’s high-level intent (via LLM prompts)          backdoor (indirect prompt injection)[24]. An application-
+or its low-level actions (e.g., system calls), but cannot cor-       level monitor might see a successful ”execute script” tool
+relate these two views. This blindness makes it difficult to         call, while a system monitor sees a bash process writing to
+distinguish between benign operations, malicious attacks,            a file. Neither can bridge the gap to understand that a benign
+and costly failures. We introduce AgentSight, an observ-             intention has been twisted into a malicious action, render-
+ability framework that bridges this semantic gap using a             ing them effectively blind.
+hybrid approach. Our approach, boundary tracing, moni-                   Current approaches are trapped on one side of this seman-
+tors agents from outside their application code at stable            tic gap. Application-level instrumentation, found in frame-
+system interfaces using eBPF. AgentSight intercepts TLS-             works like LangChain [5] and AutoGen [23], captures an
+encrypted LLM traffic to extract semantic intent, monitors           agent’s reasoning and tool selection. While these tools see
+kernel events to observe system-wide effects, and causally           the intent, they are brittle, require constant API updates, and
+correlates these two streams across process boundaries us-           are easily bypassed: a single shell command escapes their
+ing a real-time engine and secondary LLM analysis. This              view, breaking the chain of visibility under a flawed trust
+instrumentation-free technique is framework-agnostic, re-            model. Conversely, generic system-level monitoring sees the
+silient to rapid API changes, and incurs less than 3% per-           actions, tracking every system call and file access. However,
+formance overhead. Our evaluation shows AgentSight de-               it lacks all semantic context. To such a tool, an agent writing
+tects prompt injection attacks, identifies resource-wasting          a data analysis script is indistinguishable from a compro-
+reasoning loops, and reveals hidden coordination bottle-             mised agent writing a malicious payload. Without under-
+necks in multi-agent systems. AgentSight is released as              standing the preceding LLM instructions, the why behind
+an open-source project at https://github.com/agent-sight/            the what, its stream of low-level events is meaningless noise.
+agentsight.                                                              We propose boundary tracing as a novel observability
+                                                                     method designed specifically to bridge this semantic gap.
+1   Introduction                                                     Our key insight is that while agent internals and frame-
+                                                                     works are volatile, the interfaces through which they inter-
+The role of machine learning in systems is undergoing a              act with the world (the kernel for system operations and
+fundamental shift from optimizing well-defined tasks, such           the network for communication) are stable and unavoidable.
+as database query planning, to a new paradigm of agentic             By monitoring from outside the application at these bound-
+computing. From a systems perspective, an AI agent cou-              aries, we can capture an agent’s high-level intent and its
+ples a Large Language Model’s (LLM) reasoning with di-               low-level system effects. We present AgentSight, a system
+rect access to system tools, granting it agency to perform           that realizes boundary tracing using eBPF to intercept TLS-
+operations like spawning processes, modifying the filesys-           encrypted LLM traffic for intent and monitor kernel events
+tem, and executing commands. This technology is being                for effects. Its core is a novel, two-stage correlation process:
+rapidly integrated into production environments, power-              a real-time engine links an LLM response to the system ba-
+ing autonomous developer tools like claude code[1], cursor           havior it triggers, and a secondary ”observer” LLM performs
+agent[2] and genimi-cli[22], which can independently han-            a deep semantic analysis on the resulting trace to infer risks
+dle complex software engineering and system maintenance              and explain why a sequence of events is suspicious. This
+tasks. In essence, we are deploying non-deterministic ML             instrumentation-free, framework-agnostic technique incurs
+systems, creating an unprecedented class of challenges for           less than 3% overhead and effectively detects prompt injec-
+system reliability, security, and verification.                      tion attacks, resource-wasting reasoning loops, and multi-
+   This paradigm shift creates a critical semantic gap: the          agent system bottlenecks.
+chasm between an agent’s high-level intent and its low-level             In summary, our contributions are:
+system actions. Unlike traditional programs with predictable
+                                                                 1
+      1. We introduce boundary tracing as a principled ap-            2.3   extended Berkeley Packet Filter (eBPF)
+         proach to AI agent observability that bridges the se-        To bridge the semantic gap, our approach requires a tech-
+         mantic gap by monitoring at stable system interfaces.        nology that can safely and efficiently observe both net-
+      2. We present a novel engine that combines real-time,           work communication and kernel activity. eBPF (extended
+         eBPF-based signal matching with LLM-based seman-             Berkeley Packet Filter) is a fundamental advancement in
+         tic analysis to provide deep, contextual understanding       kernel programmability that provides precisely this capabil-
+         of agent behavior.                                           ity [11]. Originally designed for packet filtering, eBPF has
+      3. We demonstrate AgentSight’s effectiveness in detect-         evolved into a general-purpose, in-kernel virtual machine
+         ing prompt injection attacks, reasoning loops, and           that powers modern observability and security tools [9, 19].
+         multi-agent coordination failures with sub-3% over-          For AI agent observability, eBPF is uniquely suited because
+         head.                                                        it allows observation at the exact boundaries where agents
+                                                                      interact with the world, enabling both TLS interception
+                                                                      for semantic intent and syscall monitoring for system ac-
+2      Background and Related Work                                    tions with minimal overhead. Critically, its kernel-enforced
+This section outlines LLM agent architecture, reviews exist-          safety guarantees, including verified termination and mem-
+ing observability work to highlight the semantic gap, and             ory safety, make it ideal for production environments and
+introduces eBPF as our foundational technology.                       provide a stable foundation for our solution [6].
+
+
+2.1     LLM Agent Architecture                                        3     Design
+The agentic systems described in the introduction are typ-            The design of AgentSight is guided by a single imperative:
+ically implemented using a common architecture. These                 to bridge the semantic gap between an agent’s intent and
+systems consist of three core components: (1) an LLM                  its actions. We achieve this through a novel observability
+backend for reasoning, (2) a tool execution framework for             method, boundary tracing, realized by a multi-signal corre-
+system interactions, and (3) a control loop that orches-              lation engine.
+trates prompts, tool calls, and state management. Popular
+frameworks such as LangChain [5], AutoGen [23], cursor                3.1   Boundary Tracing: A Principled Approach
+agent[2], genimi-cli[22] and Claude Code[1] all implement
+                                                                      Our key insight is that all agent interactions must traverse
+variations of this model. This architecture is what enables           well-defined and stable system boundaries: the kernel for
+agents to dynamically construct and execute complex plans             system operations and the network for external communica-
+(e.g., autonomously writing and running a script to analyze           tions with LLM serving backends (Figure 1). By monitoring
+a dataset) based on high-level natural language objectives.           at these boundaries rather than within volatile agent code,
+                                                                      we achieve comprehensive monitoring independent of im-
+2.2     Observability for LLM Agent                                   plementation details. This approach enables Semantic Corre-
+                                                                      lation, the ability to causally link high-level intentions with
+Existing approaches are siloed on one side of the seman-
+                                                                      low-level system events. This is supported by two princi-
+tic gap. Intent-side observability, supported by industry
+                                                                      ples. First is Comprehensiveness, as kernel-level monitoring
+tools like Langfuse, LangSmith, and Datadog [7, 12, 14, 15,
+                                                                      ensures no system action from process creation to file I/O
+17] and is unifying by standards from the OpenTelemetry
+                                                                      goes unobserved, even across spawned subprocesses. Sec-
+GenAI working group [4, 16] and acadamics conceptual tax-
+                                                                      ond is Stability, since system call ABIs and network proto-
+onomies [8, 18] under the AgentOps concept, excels at trac-
+                                                                      cols evolve far more slowly than agent frameworks, provid-
+ing application-level events but is fundamentally blind to
+                                                                      ing a durable, future-proof solution. This paradigm shifts the
+out-of-process system actions. Conversely, action-side ob-
+                                                                      trust model from assuming a cooperative agent to enforcing
+servability with tools like Falco and Tracee [3, 21] offers
+                                                                      observation at tamper-proof boundaries.
+comprehensive visibility into system calls but lacks the se-
+mantic context to understand an agent’s intent, failing to dis-
+tinguish a benign task from a malicious one. A parallel line          3.2   System Architecture: Observing the Boundaries
+of research into reasoning-level and interpretability aims to         AgentSight’s architecture simultaneously taps into the two
+make the agent’s internal thought processes more transpar-            critical boundaries. As shown in Figure 2, we use eBPF to
+ent by reconstructing cognitive traces [20] or enabling ex-           place non-intrusive probes that capture a decrypted Intent
+planatory dialogues [13], but these work mainly focus on              Stream (LLM prompts/responses) from userspace SSL func-
+the llm itself, does not bridge the gap between the agent’s           tions and an Action Stream (syscalls, process events) from
+internal reasoning and its external, low-level effects on the         the kernel. A userspace correlation engine then processes
+system.                                                               and joins these streams into a unified, causally-linked trace.
+                                                                  2
+                                                                    to the parent agent; Temporal Proximity, which associates
+                                                                    actions that occur within a narrow time window immedi-
+                                                                    ately following an LLM response; and Argument Match-
+                                                                    ing, which directly matches content from LLM responses,
+                                                                    such as filenames, URLs, or commands, with the arguments
+                                                                    of subsequent system calls. Together, these signals enable
+                                                                    AgentSight to definitively establish causal relationships be-
+                                                                    tween high-level intentions and low-level system opera-
+                                                                    tions across process boundaries.
+                                                                       LLM-Powered Semantic Analysis: To move beyond
+                                                                    brittle, rule-based detection, we designed the system to use
+                                                                    a secondary LLM as a reasoning engine. By prompting a
+                                                                    powerful model with the correlated event trace, we leverage
+                                                                    its ability to understand semantic nuance, infer causality in
+                                                                    complex scenarios, and summarize findings in natural lan-
+                                                                    guage. This ”AI to watch AI” approach allows AgentSight to
+                                                                    detect threats that do not match predefined patterns.
+
+                                                                    4     Implementation
+           Figure 1. agent framwork overview                        AgentSight is implemented as a userspace daemon (6000
+                                                                    lines of Rust/C) orchestrating eBPF programs, with a Type-
+                                                                    Script frontend (3000 lines) for analysis. It is designed for
+                                                                    high performance, processing raw kernel event streams into
+                                                                    correlated, human-readable data.
+
+                                                                    4.1   Data Collection at the Boundaries
+                                                                    Our eBPF probes capture the raw intent and action streams
+                                                                    from the system. To capture semantic intent, an eBPF
+                                                                    program with uprobes attaches to SSL_read/SSL_write in
+                                                                    crypto libraries like OpenSSL to intercept decrypted LLM
+                                                                    communications. Our userspace daemon implements a
+                                                                    stateful reassembly mechanism to handle streaming proto-
+                                                                    cols such as Server-Sent Events (SSE). To capture system
+                                                                    actions, a second eBPF program uses stable tracepoints like
+                                                                    sched_process_exec to build a process tree and kprobes to
+                                                                    dynamically monitor relevant syscalls such as openat2, con-
+      Figure 2. AgentSight System Architecture.                     nect, and execve. To manage the high volume of kernel
+                                                                    events without data loss, aggressive in-kernel filtering is ap-
+   Several key compnents enable AgentSight to effectively           plied to ensure only events from targeted agent processes
+bridge the semantic gap:                                            are sent to userspace, minimizing overhead.
+   eBPF for Safe, Unified Probing: We chose eBPF for its
+production safety, high performance, and unified ability to         4.2   The Hybrid Correlation Engine
+access both userspace and kernel data streams. Our design           The Rust-based userspace daemon houses our two-stage cor-
+intercepts decrypted data from the agent’s interation with          relation engine. The first stage consumes events from eBPF
+LLM serving backend, which is more efficient and manage-            ring buffers and performs real-time heuristic linking. This
+able than network-level packet capture or proxy-based so-           streaming pipeline enriches raw events with context like
+lutions.                                                            mapping a file descriptor to a full path, maintains a stateful
+   Multi-Signal Causal Correlation Engine: The core of              process tree, and applies the causal linking logic described
+our design is a correlation strategy that establishes causal-       in our design, using a 100-500ms window for temporal cor-
+ity between intent and action. We designed a multi-signal           relation. Once a coherent trace is constructed, the second
+engine that relies on three key mechanisms: Process Lin-            stage formats it into a structured log for semantic analy-
+eage, which builds a complete process tree by tracking fork         sis. This log is used to construct a detailed prompt for a
+and execve events to link actions in child processes back           secondary LLM, instructing it to act as a security analyst.
+                                                                3
+The LLM’s natural language analysis and confidence score             and connecting to a non-corporate domain, were logically
+become the final output of our system. A key challenge at            inconsistent with its stated ”analyze sales data” goal, iden-
+this stage is managing the latency and cost of LLM analysis,         tifying a classic data exfiltration pattern from a successful
+which our system mitigates through asynchronous process-             prompt injection. This demonstrates how combining intent
+ing and robust prompt engineering.                                   and action provides actionable, context-aware detection.
+
+5     Evaluation                                                     5.2.2 Case Study 2: Reasoning Loop Detection. An
+                                                                     agent attempting a complex task entered an infinite loop
+Our evaluation is guided by two research questions: First,
+                                                                     due to a common tool usage error. It repeatedly called a
+what is the performance overhead of AgentSight in realis-
+                                                                     command-line tool with incorrect arguments, received an
+tic workflows? Second, how effectively does it bridge the
+                                                                     error, but then failed to correct its mistake, retrying the ex-
+semantic gap to detect critical security threats and perfor-
+                                                                     act same failing command. AgentSight’s real-time monitors
+mance pathologies, while also revealing complex dynamics
+                                                                     detect this anomalous resource consumption from a trace
+in multi-agent systems?
+                                                                     of 12 API calls and passed it to the observer LLM. The LLM
+5.1   Performance Evaluation                                         identified the root cause as a persistent tool error, noting
+                                                                     the agent was caught in a ”try-fail-re-reason” loop; it ex-
+        Table 1. Overhead Introduced by AgentSight                   ecuted the same failing command, passed the identical er-
+                                                                     ror back to the reasoning LLM, and failed to learn from the
+                                                                     tool’s output. The system triggered an alert after three com-
+ Task                 Baseline (s) AgentSight (s) Overhead           plete cycles, a configurable threshold, where the agent had
+ Understand Repo            127.98           132.33         3.4%     already consumed 4,800 tokens. This intervention prevented
+ Code Writing                22.54            23.64         4.9%     further resource waste and service degradation, saving an
+ Repo Compilation            92.40            92.72         0.4%     estimated $2.40 in API cost, and highlighted the importance
+                                                                     of semantic-aware monitoring.
+   We evaluated AgentSight on a server (Ubuntu 22.04,                5.2.3 Case Study 3: Multi-Agent Coordination Moni-
+Linux 6.14.0) using Claude Code 1.0.62 as the test agent.            toring. AgentSight monitored a team of three collaborating
+The benchmarks focused on three real-world developer                 software development agents, capturing 12,847 total events.
+workflows using a tutorial repo[10]: repository understand-          For instance, Agent B was blocked for 34% of its total wall-
+ing with the /init command, code generation for bpf-                 clock time waiting on Agent A’s multiple design revisions,
+trace scripts, and full repository compilation with parallel         which triggered cascading rework. File locking contention
+builds. Each experiment was run 3 times with and without             between Agent B’s implementation and Agent C’s testing
+AgentSight to measure runtime overhead. Table 1 quantifies           caused 23 retry cycles. The analysis demonstrated that while
+the runtime overhead of AgentSight across three developer            the agents developed some emergent coordination, explicit
+workflows, with a average 2.9% overhead.                             mechanisms could reduce total runtime by up to 25% on this
+                                                                     workload and message-based communication could elimi-
+5.2   Case Studies                                                   nate most of the polling overhead. This reveals how bound-
+We evaluated AgentSight’s effectiveness through case stud-           ary tracing uniquely captures multi-agent system dynamics
+ies that demonstrate its ability to detect security threats,         that application-level monitoring cannot observe across pro-
+identify performance issues, and provide insights into com-          cess boundaries.
+plex multi-agent systems.
+5.2.1 Case Study 1: Detecting Prompt Injection At-                   6   Conclusion
+tacks. We tested AgentSight’s ability to detect indirect             This paper introduced AgentSight to bridge the critical se-
+prompt injection attacks[24]. In our test, a data analysis           mantic gap between an AI agent’s intent and its system-
+agent received a crafted prompt that embedded malicious              level actions using novel boundary tracing approach. By
+commands within a legitimate request, ultimately causing             leveraging eBPF, the system monitors network and kernel
+it to exfiltrate ‘/etc/passwd‘. AgentSight captured the com-         events without instrumentation, causally linking LLM com-
+plete attack chain: from the initial LLM interaction with the        munications to their system-wide effects via a hybrid corre-
+suspicious webpage to the final sensitive file read, including       lation engine. Our evaluation shows AgentSight effectively
+the intermediate subprocess spawn and outbound connec-               detects prompt injection attacks, reasoning loops, and multi-
+tion. The correlated event trace was passed to our observer          agent bottlenecks with under 3% performance overhead.
+LLM for analysis, which returned a high-confidence attack            This ”AI to watch AI” provides a foundational methodology
+score (5/5). The LLM’s analysis concluded that the agent’s           for the secure and reliable deployment of increasingly au-
+actions, executing a shell command to read ‘/etc/passwd‘             tonomous AI systems.
+                                                                 4
+References                                                                       [24] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. 2024.
+ [1] Anthropic. 2025. Introducing Claude Code. https://www.anthropic.                 InjecAgent: Benchmarking Indirect Prompt Injections in Tool-
+     com/news/claude-code. Agentic coding tool announcement, An-                      Integrated Large Language Model Agents. In Findings of the Associa-
+     thropic blog.                                                                    tion for Computational Linguistics (ACL Findings). doi:10.48550/arXiv.
+ [2] Anysphere Inc. 2025. Cursor: The AI‑powered Code Editor. https:                  2403.02691 arXiv:2403.02691.
+     //cursor.com/. AI‑assisted IDE with agent mode; latest release ver-
+     sion 1.0 on June 4, 2025.
+ [3] The Falco Authors. 2023. Falco: Cloud Native Runtime Security. https:
+     //falco.org/
+ [4] Alexandr Bandurchin. [n. d.]. AI Agent Observability Explained:
+     Key Concepts and Standards. https://uptrace.dev/blog/ai-agent-
+     observability. Uptrace Blog, April 16, 2025.
+ [5] Harrison Chase. 2023. LangChain: Building applications with LLMs
+     through composability. https://github.com/langchain-ai/langchain
+ [6] Linux Kernel Community. 2023. BPF Documentation - The Linux Ker-
+     nel. https://www.kernel.org/doc/html/latest/bpf/
+ [7] Datadog Inc. [n. d.].      Monitor, troubleshoot, and improve AI
+     agents with Datadog. https://www.datadoghq.com/blog/monitor-ai-
+     agents/. Datadog Blog, 2023.
+ [8] Liming Dong, Qinghua Lu, and Liming Zhu. 2024. AgentOps: En-
+     abling Observability of LLM Agents. arXiv preprint arXiv:2411.05285
+     (2024).
+ [9] eBPF Community. 2023. eBPF Documentation. https://ebpf.io/
+[10] eunomia-bpf. 2024. eBPF Developer Tutorial. https://github.com/
+     eunomia-bpf/bpf-developer-tutorial. Accessed: 2025-01-29.
+[11] Brendan Gregg. 2019. BPF Performance Tools. Addison-Wesley Profes-
+     sional.
+[12] Helicone. 2023. Helicone / LLM-Observability for Developers. https:
+     //www.helicone.ai/
+[13] Been Kim, John Hewitt, Neel Nanda, Noah Fiedel, and Oyvind Tafjord.
+     2025. Because we have LLMs, we Can and Should Pursue Agentic
+     Interpretability. arXiv preprint arXiv:2506.12152 (2025).
+[14] LangChain. 2023. Observability Quick Start - LangSmith - LangChain.
+     https://docs.smith.langchain.com/observability
+[15] Langfuse. 2024. Langfuse - LLM Observability & Application Tracing.
+     https://langfuse.com/
+[16] Guangya Liu and Sujay Solomon. [n. d.]. AI Agent Observability –
+     Evolving Standards and Best Practices. https://opentelemetry.io/blog/
+     2025/ai-agent-observability/. OpenTelemetry Blog, March 6, 2025.
+[17] Jannik Maierhöfer. [n. d.].      AI Agent Observability with Lang-
+     fuse.      https://langfuse.com/blog/2024-07-ai-agent-observability-
+     with-langfuse. Langfuse Blog, March 16, 2025.
+[18] Dany Moshkovich and Sergey Zeltyn. 2025. Taming Uncertainty via
+     Automation: Observing, Analyzing, and Optimizing Agentic AI Sys-
+     tems. arXiv preprint arXiv:2507.11277 (2025).
+[19] Cilium Project. 2023. eBPF-based Networking, Observability, and Se-
+     curity. https://cilium.io/
+[20] Benjamin Rombaut, Sogol Masoumzadeh, Kirill Vasilevski, Dayi Lin,
+     and Ahmed E. Hassan. 2025. Watson: A Cognitive Observability
+     Framework for the Reasoning of LLM-Powered Agents. arXiv preprint
+     arXiv:2411.03455 (2025).
+[21] Aqua Security. 2023. Tracee: Runtime Security and Forensics using
+     eBPF. https://github.com/aquasecurity/tracee
+[22] Taylor Mullen and Ryan J. Salva. 2025.              Gemini CLI: Your
+     Open‑Source AI Agent. https://blog.google/technology/developers/
+     introducing-gemini-cli-open-source-ai-agent/. Google Developers
+     Blog, Jun 2025.
+[23] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Shaokun Zhang,
+     Erkang Zhu, Beibin Li, Li Jiang, Xiaoyun Zhang, and Chi Wang.
+     2023. AutoGen: Enable Next-Gen Large Language Model Applica-
+     tions. https://github.com/microsoft/autogen
+
+
+
+
+                                                                             5
+
