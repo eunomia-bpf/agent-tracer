@@ -7,10 +7,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// Include Linux types if available, otherwise define our own
+#ifdef __linux__
+#include <linux/types.h>
+#else
 // BPF type definitions for testing
 typedef uint32_t __u32;
 typedef uint64_t __u64;
+#endif
+
+#ifndef BPF_ANY
 #define BPF_ANY 0
+#endif
 
 #include "process.h"
 
